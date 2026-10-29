@@ -1,0 +1,45 @@
+{
+  "menu": [
+    {
+      "id": "tools",
+      "submenu": [
+        {
+          "label": "UML Helpers",
+          "id": "tools.uml-helpers",
+          "submenu": [
+            { "label": "Generate Constructor, Getters & Setters", "id": "tools.uml-helpers.accessors", "command": "uml-helpers:accessors" },
+            { "label": "Generate Constructor", "id": "tools.uml-helpers.constructor", "command": "uml-helpers:constructor" },
+            { "label": "Generate Getters", "id": "tools.uml-helpers.getters", "command": "uml-helpers:getters" },
+            { "label": "Generate Setters", "id": "tools.uml-helpers.setters", "command": "uml-helpers:setters" }
+          ]
+        }
+      ]
+    }
+  ],
+  "context-menu": {
+    "diagram-canvas": [
+      {
+        "label": "UML Helpers",
+        "id": "uml-helpers",
+        "submenu": [
+          { "label": "Generate Constructor, Getters & Setters", "id": "uml-helpers.accessors", "command": "uml-helpers:accessors" },
+          { "label": "Generate Constructor", "id": "uml-helpers.constructor", "command": "uml-helpers:constructor" },
+          { "label": "Generate Getters", "id": "uml-helpers.getters", "command": "uml-helpers:getters" },
+          { "label": "Generate Setters", "id": "uml-helpers.setters", "command": "uml-helpers:setters" }
+        ]
+      }
+    ],
+    "model-explorer": [
+      {
+        "label": "UML Helpers",
+        "id": "uml-helpers",
+        "submenu": [
+          { "label": "Generate Constructor, Getters & Setters", "id": "uml-helpers.accessors", "command": "uml-helpers:accessors" },
+          { "label": "Generate Constructor", "id": "uml-helpers.constructor", "command": "uml-helpers:constructor" },
+          { "label": "Generate Getters", "id": "uml-helpers.getters", "command": "uml-helpers:getters" },
+          { "label": "Generate Setters", "id": "uml-helpers.setters", "command": "uml-helpers:setters" }
+        ]
+      }
+    ]
+  }
+}
