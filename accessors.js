@@ -3,6 +3,7 @@
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1)
 const lcfirst = s => s.charAt(0).toLowerCase() + s.slice(1)
 const typeName = t => (typeof t === 'string' ? t : (t && t.name) || '')
+const baseName = name => (name || '').replace(/^_+/, '') // _age -> age
 const param = (name, attr) => ({ name, type: attr.type, multiplicity: attr.multiplicity })
 // `?int`, or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
 const optional = attr => typeName(attr.type).startsWith('?') || /^(0|\*)/.test((attr.multiplicity || '').trim())
@@ -61,7 +62,7 @@ function planAccessors (attrs, existingNames, { ctor = false, getters = true, se
     }
   }
   const fields = attrs
-    .map(attr => ({ attr, base: (attr.name || '').replace(/^_+/, '') }))
+    .map(attr => ({ attr, base: baseName(attr.name) }))
     .filter(f => f.base)
   for (const { attr, base } of fields) {
     if (getters) {
@@ -96,4 +97,69 @@ function planAccessors (attrs, existingNames, { ctor = false, getters = true, se
   return specs
 }
 
-module.exports = { planAccessors, associationFields, missingAttributes }
+/**
+ * Generated operations of an attribute, found by naming convention among the class `ops`.
+ */
+function generatedFor (attr, ops) {
+  const base = baseName(attr.name)
+  const find = name => ops.find(o => o.name === name)
+  const getter = base && (find('get' + cap(base)) || find('is' + cap(base)))
+  const setter = base && find('set' + cap(base))
+  const ctor = find('__construct')
+  return {
+    base,
+    getter,
+    setter,
+    setterParam: setter && setter.parameters.find(p => p.direction !== 'return'),
+    ctor,
+    ctorParam: base && ctor && ctor.parameters.find(p => p.name === base)
+  }
+}
+
+// Getter, setter and __construct param to delete along with an attribute
+function deletedWith (attr, ops) {
+  const g = generatedFor(attr, ops)
+  return [g.getter, g.setter, g.ctorParam].filter(Boolean)
+}
+
+/**
+ * Changes that keep generated operations in line with an edited attribute (name, type, multiplicity).
+ * `attr` is the attribute now, `next` as it will be, `ops` the class operations, `attrNames` its attribute names in order.
+ * @return {Array} {assign: elem, field, value} | {remove: param, from: op} | {add: param, to: op, index}
+ */
+function planSync (attr, next, ops, attrNames) {
+  const g = generatedFor(attr, ops)
+  const nextBase = baseName(next.name)
+  if (!g.base || !nextBase) return []
+  const changes = []
+  const set = (elem, field, value) => {
+    if (elem && elem[field] !== value) changes.push({ assign: elem, field, value })
+  }
+  const retype = p => {
+    set(p, 'type', next.type)
+    set(p, 'multiplicity', next.multiplicity)
+  }
+  if (g.getter) {
+    set(g.getter, 'name', g.getter.name.slice(0, -g.base.length) + cap(nextBase)) // keeps get/is
+    retype(g.getter.parameters.find(p => p.direction === 'return'))
+  }
+  if (g.setter) set(g.setter, 'name', 'set' + cap(nextBase))
+  retype(g.setterParam)
+  set(g.setterParam, 'name', nextBase)
+  if (g.ctor) {
+    const wanted = !next.isStatic && !optional(next)
+    if (g.ctorParam && wanted) {
+      retype(g.ctorParam)
+      set(g.ctorParam, 'name', nextBase)
+    } else if (g.ctorParam) {
+      changes.push({ remove: g.ctorParam, from: g.ctor })
+    } else if (wanted) {
+      // Keep attribute order: insert after the params of the attributes declared before it
+      const before = new Set(attrNames.slice(0, attrNames.indexOf(attr.name)).map(baseName))
+      changes.push({ add: param(nextBase, next), to: g.ctor, index: g.ctor.parameters.filter(q => before.has(q.name)).length })
+    }
+  }
+  return changes
+}
+
+module.exports = { planAccessors, associationFields, missingAttributes, planSync, deletedWith }

@@ -1,6 +1,6 @@
 // Run: node test.js
 const assert = require('assert')
-const { planAccessors, associationFields, missingAttributes } = require('./accessors')
+const { planAccessors, associationFields, missingAttributes, planSync, deletedWith } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
 const byName = (specs, name) => specs.find(s => s.name === name)
@@ -86,5 +86,50 @@ assert.strictEqual(byName(assocSpecs, 'getCommande').params[0].multiplicity, '')
 // -domicile: ?Adresse is created unless an attribute already has that name; duplicate roles collapse
 assert.deepStrictEqual(missingAttributes([{ name: 'domicile' }], fields).map(f => f.name), ['commande'])
 assert.deepStrictEqual(missingAttributes([], [...fields, fields[1]]).map(f => f.name), ['domicile', 'commande'])
+
+// Sync after a type change
+const P = (name, t, direction = 'in') => ({ name, type: t, multiplicity: '', direction })
+const classOps = () => [
+  { name: '__construct', parameters: [P('nom', 'string'), P('ville', 'string')] },
+  { name: 'getNom', parameters: [P('', 'string', 'return')] },
+  { name: 'setNom', parameters: [P('nom', 'string'), P('', 'void', 'return')] },
+  { name: 'getId', parameters: [P('', '?int', 'return')] }
+]
+const attrNames = ['id', 'nom', 'ville']
+const nom = { name: 'nom', type: 'string', multiplicity: '' }
+const id = { name: 'id', type: '?int', multiplicity: '' }
+const sync = (attr, next, ops = classOps()) => planSync(attr, { ...attr, ...next }, ops, attrNames)
+// -nom: string -> -nom: int retypes getter, setter param and constructor param (not the void return)
+let ops = classOps()
+let changes = sync(nom, { type: 'int' }, ops)
+assert.deepStrictEqual(changes.map(c => [c.assign, c.field, c.value]), [
+  [ops[1].parameters[0], 'type', 'int'], [ops[2].parameters[0], 'type', 'int'], [ops[0].parameters[0], 'type', 'int']
+])
+// Unchanged: nothing to do
+assert.deepStrictEqual(sync(nom, {}), [])
+// -nom: ?string leaves the constructor
+ops = classOps()
+assert.deepStrictEqual(sync(nom, { type: '?string' }, ops).find(c => c.remove), { remove: ops[0].parameters[0], from: ops[0] })
+// -id: int joins the constructor before nom
+ops = classOps()
+changes = sync(id, { type: 'int' }, ops)
+assert.deepStrictEqual(changes.find(c => c.add), { add: { name: 'id', type: 'int', multiplicity: '' }, to: ops[0], index: 0 })
+assert.strictEqual(changes.find(c => c.assign).assign, ops[3].parameters[0])
+// No constructor in the class: none is created
+assert.deepStrictEqual(sync(id, { type: 'int' }, classOps().slice(1)).filter(c => c.add), [])
+// -nom renamed -test: getTest, setTest(test), __construct(test, ...)
+ops = classOps()
+assert.deepStrictEqual(sync(nom, { name: 'test' }, ops).map(c => [c.assign, c.field, c.value]), [
+  [ops[1], 'name', 'getTest'], [ops[2], 'name', 'setTest'], [ops[2].parameters[0], 'name', 'test'], [ops[0].parameters[0], 'name', 'test']
+])
+// isActif keeps its "is" prefix when renamed
+const isOps = [{ name: 'isActif', parameters: [P('', 'bool', 'return')] }]
+assert.deepStrictEqual(planSync({ name: 'actif', type: 'bool', multiplicity: '' }, { name: 'present', type: 'bool', multiplicity: '' }, isOps, ['actif'])
+  .map(c => c.value), ['isPresent'])
+
+// Deleting -nom deletes getNom, setNom and its constructor param, nothing else
+ops = classOps()
+assert.deepStrictEqual(deletedWith(nom, ops), [ops[1], ops[2], ops[0].parameters[0]])
+assert.deepStrictEqual(deletedWith({ name: 'ville' }, ops), [ops[0].parameters[1]])
 
 console.log('ok')
