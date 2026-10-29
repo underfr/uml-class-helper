@@ -1,6 +1,8 @@
 // Run: node test.js
 const assert = require('assert')
-const { planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType } = require('./accessors')
+const {
+  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+} = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
 const byName = (specs, name) => specs.find(s => s.name === name)
@@ -164,5 +166,28 @@ assert.strictEqual(renamedType('?Categorie', 'Categorie', 'Famille'), '?Famille'
 assert.strictEqual(renamedType('Categorie', 'Categorie', 'Famille'), 'Famille')
 assert.strictEqual(renamedType('?CategorieMere', 'Categorie', 'Famille'), null)
 assert.strictEqual(renamedType({ name: 'Categorie' }, 'Categorie', 'Famille'), null) // real reference: StarUML follows it
+
+// Inheritance: Employe(salaire) extends Personne(id, nom, prenom)
+const personne = [
+  { name: 'id', type: '?int', multiplicity: '' },
+  { name: 'nom', type: 'string', multiplicity: '' },
+  { name: 'prenom', type: 'string', multiplicity: '' }
+]
+const salaire = { name: 'salaire', type: 'float', multiplicity: '' }
+const employe = planAccessors([salaire], [], { ctor: true }, personne)
+// getters/setters for own attributes only; constructor takes the parent's params first
+assert.deepStrictEqual(names(employe), ['getSalaire', 'setSalaire', '__construct'])
+assert.deepStrictEqual(byName(employe, '__construct').params.map(p => p.name), ['nom', 'prenom', 'salaire'])
+
+// Generalization drawn after the child's constructor exists: inherited params inserted, in order
+const childCtor = { name: '__construct', parameters: [P('salaire', 'float')] }
+const childOps = [childCtor, { name: 'getNom', parameters: [P('', 'int', 'return')] }]
+const inheritChanges = planInheritedParams(personne, childOps, ['id', 'nom', 'prenom', 'salaire'])
+assert.ok(inheritChanges.every(c => c.add && c.to === childCtor)) // the child's own getNom is left alone
+const applied = childCtor.parameters.map(p => p.name)
+for (const c of inheritChanges) applied.splice(c.index, 0, c.add.name) // same order as StarUML applies them
+assert.deepStrictEqual(applied, ['nom', 'prenom', 'salaire'])
+// Already there: nothing
+assert.deepStrictEqual(planInheritedParams(personne, [{ name: '__construct', parameters: [P('nom', 'string'), P('prenom', 'string')] }], ['id', 'nom', 'prenom']), [])
 
 console.log('ok')

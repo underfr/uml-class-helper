@@ -64,10 +64,11 @@ function missingAttributes (attrs, fields) {
 /**
  * Plan operations for attributes. Names already in `existingNames` are skipped,
  * so running the command twice adds nothing.
- * Constructor takes every non-static, non-optional attribute.
+ * Constructor takes every non-static, non-optional attribute, the `inherited` ones (parents' attributes,
+ * root first) before the class's own.
  * @return {Array<{name: string, isStatic: boolean, atStart: boolean, params: Array<Object>}>}
  */
-function planAccessors (attrs, existingNames, { ctor = false, getters = true, setters = true } = {}) {
+function planAccessors (attrs, existingNames, { ctor = false, getters = true, setters = true } = {}, inherited = []) {
   const taken = new Set(existingNames)
   const specs = []
   const add = spec => {
@@ -76,10 +77,10 @@ function planAccessors (attrs, existingNames, { ctor = false, getters = true, se
       specs.push(spec)
     }
   }
-  const fields = attrs
+  const toFields = list => list
     .map(attr => ({ attr, base: baseName(attr.name) }))
     .filter(f => f.base)
-  for (const { attr, base } of fields) {
+  for (const { attr, base } of toFields(attrs)) {
     if (getters) {
       const prefix = /^\??bool(ean)?$/i.test(typeName(attr.type)) ? 'is' : 'get'
       add({
@@ -104,7 +105,7 @@ function planAccessors (attrs, existingNames, { ctor = false, getters = true, se
       name: '__construct',
       isStatic: false,
       atStart: true,
-      params: fields
+      params: toFields([...inherited, ...attrs])
         .filter(f => !f.attr.isStatic && !optional(f.attr))
         .map(f => param(f.base, f.attr))
     })
@@ -177,6 +178,15 @@ function planSync (attr, next, ops, attrNames) {
   return changes
 }
 
+/**
+ * Changes adding the `inherited` attributes' params missing from the __construct among `ops`.
+ * Reversed: each insert index is computed before any of them is applied, so later ones go first.
+ */
+function planInheritedParams (inherited, ops, ctorNames) {
+  const ctorOps = ops.filter(o => o.name === '__construct') // leave the child's own get/set alone
+  return [...inherited].reverse().flatMap(attr => planSync(attr, attr, ctorOps, ctorNames))
+}
+
 // Text type after renaming class `oldName` to `newName` (`?Categorie` -> `?Famille`), or null if unaffected
 function renamedType (t, oldName, newName) {
   if (t === oldName) return newName
@@ -184,4 +194,6 @@ function renamedType (t, oldName, newName) {
   return null
 }
 
-module.exports = { planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType }
+module.exports = {
+  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+}

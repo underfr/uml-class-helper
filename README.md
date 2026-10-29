@@ -32,6 +32,7 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
   3. association simple : le côté `0..*` reçoit le côté `1` ; sinon les deux.
   
   Rôle vide → nom de la classe.
+- Héritage (`Employe ──▷ Personne`) : le `__construct` de l'enfant prend d'abord les paramètres du parent (`__construct(nom, prenom, salaire)`) ; getters/setters seulement pour ses propres attributs.
 - Rien n'est dupliqué si on relance ; un seul `Ctrl+Z` annule tout.
 
 ## Automatique
@@ -43,3 +44,5 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 - Supprimer un attribut supprime son getter, son setter et son paramètre du `__construct` (2 `Ctrl+Z` pour tout récupérer).
 - Supprimer une association supprime l'attribut qu'elle avait généré (`-categorie: ?Categorie`) et ses méthodes, y compris quand on supprime la classe à l'autre bout.
 - Renommer une classe met à jour les types texte `?Ancien` → `?Nouveau` partout.
+- Tracer un héritage retire le `-id` de l'enfant (le parent l'a déjà) et ajoute les paramètres du parent dans son `__construct` s'il existe.
+- Ajouter, renommer, retyper ou supprimer un attribut du parent met aussi à jour le `__construct` des classes filles.

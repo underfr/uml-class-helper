@@ -1,7 +1,36 @@
-const { planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType } = require('./accessors')
+const {
+  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+} = require('./accessors')
 
 const ALL = { ctor: true, getters: true, setters: true }
 const isClassAttribute = e => e instanceof type.UMLAttribute && e._parent instanceof type.UMLClassifier
+const ctorOnly = cls => cls.operations.filter(o => o.name === '__construct')
+
+// Inheritance between classes (PHP: single parent, the first generalization wins)
+const generalizations = (cls, side) => app.repository.getRelationshipsOf(cls, r =>
+  r instanceof type.UMLGeneralization && r[side] === cls && r.source instanceof type.UMLClass && r.target instanceof type.UMLClass)
+// Parents' attributes, root first
+function inheritedAttrs (cls) {
+  const chain = []
+  const seen = new Set([cls])
+  for (let g = generalizations(cls, 'source')[0]; g && !seen.has(g.target); g = generalizations(g.target, 'source')[0]) {
+    seen.add(g.target)
+    chain.unshift(g.target)
+  }
+  return chain.flatMap(p => p.attributes)
+}
+// Children, grandchildren...
+function descendantsOf (cls, seen = new Set([cls])) {
+  for (const g of generalizations(cls, 'target')) {
+    if (!seen.has(g.source)) {
+      seen.add(g.source)
+      descendantsOf(g.source, seen)
+    }
+  }
+  return [...seen].filter(c => c !== cls)
+}
+// Attribute names in __construct order (inherited first), for param positions
+const ctorNames = cls => [...inheritedAttrs(cls), ...cls.attributes].map(a => a.name)
 
 // Classifier -> { attrs to process, newAttrs to create }: the given attributes, or every
 // attribute of a given class plus its navigable association ends not yet declared as attributes
@@ -38,7 +67,7 @@ function addGenerated (builder, cls, { attrs, newAttrs }, options) {
     builder.fieldInsert(cls, 'attributes', attr)
     count++
   }
-  for (const spec of planAccessors(attrs, cls.operations.map(o => o.name), options)) {
+  for (const spec of planAccessors(attrs, cls.operations.map(o => o.name), options, inheritedAttrs(cls))) {
     const op = new type.UMLOperation()
     op._parent = cls
     op.name = spec.name
@@ -112,13 +141,33 @@ function onElementCreated (model) {
       const cls = model._parent
       runOperation('add accessors', builder => {
         addGenerated(builder, cls, { attrs: [model], newAttrs: [] }, { getters: true, setters: true })
-        // Only adds the param to an existing constructor
-        applyChanges(builder, planSync(model, model, cls.operations, cls.attributes.map(a => a.name)))
+        // Only adds the param to existing constructors, in the class and its subclasses
+        applyChanges(builder, planSync(model, model, cls.operations, ctorNames(cls)))
+        for (const child of descendantsOf(cls)) {
+          applyChanges(builder, planSync(model, model, ctorOnly(child), ctorNames(child)))
+        }
       })
+    } else if (model instanceof type.UMLGeneralization &&
+      model.source instanceof type.UMLClass && model.target instanceof type.UMLClass) {
+      onInheritance(model.source)
     }
   } catch (err) {
     console.error('uml-helpers: generation on create failed', err)
   }
+}
+
+// `child` now extends a class: drop its own id if a parent has one, and add the inherited params
+// to the constructors of the child and its subclasses
+function onInheritance (child) {
+  const ownId = child.attributes.find(a => a.name === 'id')
+  if (ownId && inheritedAttrs(child).some(a => a.name === 'id')) {
+    app.engine.deleteElements([ownId, ...deletedWith(ownId, child.operations)], [])
+  }
+  runOperation('add inherited params', builder => {
+    for (const cls of [child, ...descendantsOf(child)]) {
+      applyChanges(builder, planInheritedParams(inheritedAttrs(cls), cls.operations, ctorNames(cls)))
+    }
+  })
 }
 
 // Deletions seen in beforeExecuteOperation, cleaned up once that operation has run
@@ -169,7 +218,11 @@ function onBeforeOperation (operation) {
     for (const [attr, values] of changedAttrs) {
       const cls = attr._parent
       const next = { name: attr.name, type: attr.type, multiplicity: attr.multiplicity, isStatic: attr.isStatic, ...values }
-      applyChanges(builder, planSync(attr, next, cls.operations, cls.attributes.map(a => a.name)))
+      applyChanges(builder, planSync(attr, next, cls.operations, ctorNames(cls)))
+      // Subclasses: only their constructor carries the inherited attribute
+      for (const child of descendantsOf(cls)) {
+        applyChanges(builder, planSync(attr, next, ctorOnly(child), ctorNames(child)))
+      }
     }
     // `?Categorie` is plain text: rename it everywhere along with the class
     if (renamedClasses.length > 0) {
@@ -203,7 +256,9 @@ function onOperationExecuted (operation) {
       if (attr) orphans.push(attr, ...deletedWith(attr, cls.operations))
     }
     for (const { cls, name } of attrs) {
-      if (alive(cls)) orphans.push(...deletedWith({ name }, cls.operations))
+      if (!alive(cls)) continue
+      orphans.push(...deletedWith({ name }, cls.operations))
+      for (const child of descendantsOf(cls)) orphans.push(...deletedWith({ name }, ctorOnly(child)))
     }
     if (orphans.length > 0) app.engine.deleteElements([...new Set(orphans)], [])
   } catch (err) {
