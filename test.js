@@ -96,9 +96,9 @@ assert.deepStrictEqual(fieldNames(Personne, [
   { end1: end(Personne, '', { name: 'parent' }), end2: end(Personne, '', { name: 'enfant' }) }
 ]), ['enfant', 'parent'])
 
-// Always nullable: __construct() empty, getDomicile(): ?Adresse, setDomicile(domicile: ?Adresse): void
+// ?Adresse stays out of the constructor, array<Commande> goes in; getDomicile(): ?Adresse, setDomicile(domicile: ?Adresse): void
 const assocSpecs = planAccessors(fields, [], { ctor: true })
-assert.deepStrictEqual(byName(assocSpecs, '__construct').params, [])
+assert.deepStrictEqual(byName(assocSpecs, '__construct').params.map(p => p.name), ['commande'])
 assert.deepStrictEqual(byName(assocSpecs, 'getDomicile').params, [
   { name: '', type: '?Adresse', multiplicity: '', direction: 'return' }
 ])
@@ -197,9 +197,9 @@ assert.deepStrictEqual(associationFields(Fournisseur, manyToMany).map(f => [f.na
 assert.deepStrictEqual(associationFields(Produit, manyToMany), [])
 assert.strictEqual(associationFields(Produit, diagram)[0].type, '?Categorie') // 0..* -- 1
 assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), end2: end(Produit, '0..*', shared) }])[0].type, '?Categorie')
-// array<T> stays out of the constructor
+// array<T> goes in the constructor
 const arraySpecs = planAccessors([{ name: 'produit', type: 'array<Produit>', multiplicity: '' }], [], { ctor: true })
-assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [])
+assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [{ name: 'produit', type: 'array<Produit>', multiplicity: '' }])
 assert.deepStrictEqual(byName(arraySpecs, 'getProduit').params[0].type, 'array<Produit>')
 assert.strictEqual(renamedType('array<Produit>', 'Produit', 'Article'), 'array<Article>')
 

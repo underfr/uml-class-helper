@@ -5,8 +5,8 @@ const lcfirst = s => s.charAt(0).toLowerCase() + s.slice(1)
 const typeName = t => (typeof t === 'string' ? t : (t && t.name) || '')
 const baseName = name => (name || '').replace(/^_+/, '') // _age -> age
 const param = (name, attr) => ({ name, type: attr.type, multiplicity: attr.multiplicity })
-// Left out of __construct: `?int`, `array<T>` (starts empty), or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
-const optional = attr => /^(\?|array<)/.test(typeName(attr.type)) || /^(0|\*)/.test((attr.multiplicity || '').trim())
+// Left out of __construct: `?int`, or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
+const optional = attr => typeName(attr.type).startsWith('?') || /^(0|\*)/.test((attr.multiplicity || '').trim())
 
 const isMany = end => {
   const upper = (end.multiplicity || '').split('..').pop().trim()
