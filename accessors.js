@@ -5,8 +5,8 @@ const lcfirst = s => s.charAt(0).toLowerCase() + s.slice(1)
 const typeName = t => (typeof t === 'string' ? t : (t && t.name) || '')
 const baseName = name => (name || '').replace(/^_+/, '') // _age -> age
 const param = (name, attr) => ({ name, type: attr.type, multiplicity: attr.multiplicity })
-// `?int`, or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
-const optional = attr => typeName(attr.type).startsWith('?') || /^(0|\*)/.test((attr.multiplicity || '').trim())
+// Left out of __construct: `?int`, `array<T>` (starts empty), or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
+const optional = attr => /^(\?|array<)/.test(typeName(attr.type)) || /^(0|\*)/.test((attr.multiplicity || '').trim())
 
 const isMany = end => {
   const upper = (end.multiplicity || '').split('..').pop().trim()
@@ -26,7 +26,8 @@ function holds (own, other) {
 }
 
 /**
- * Association ends that are properties of `cls`, as attribute-like objects typed `?Class`.
+ * Association ends that are properties of `cls`, as attribute-like objects typed `array<Class>` when
+ * the held end is many (0..*, 1..*), `?Class` otherwise (1, 0..1).
  * Arrows first, then the diamond, then multiplicities decide; otherwise both sides.
  * An unnamed role defaults to the class name (Adresse -> adresse).
  */
@@ -37,8 +38,8 @@ function associationFields (cls, associations) {
       if (own.reference !== cls || !holds(own, other)) continue
       fields.push({
         name: other.name || lcfirst(typeName(other.reference)),
-        // shortcut: plain string, so renaming the class won't update it; needed for the `?` prefix
-        type: '?' + typeName(other.reference),
+        // Plain string (needed for `?`/`array<>`); renamedType keeps it in line when the class is renamed
+        type: isMany(other) ? `array<${typeName(other.reference)}>` : '?' + typeName(other.reference),
         multiplicity: '',
         isReadOnly: other.isReadOnly,
         isStatic: false
@@ -191,6 +192,7 @@ function planInheritedParams (inherited, ops, ctorNames) {
 function renamedType (t, oldName, newName) {
   if (t === oldName) return newName
   if (t === '?' + oldName) return '?' + newName
+  if (t === `array<${oldName}>`) return `array<${newName}>`
   return null
 }
 

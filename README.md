@@ -23,9 +23,10 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 | `-dateDebut: DateTime` | `+__construct(dateDebut: DateTime)`, getter, setter |
 | `-actif: bool` | `+isActif(): bool` |
 | `-code: string {readOnly}` | getter seulement |
-| association vers `Absence` | `-absence: ?Absence`, `+getAbsence(): ?Absence`, `+setAbsence(absence: ?Absence): void` |
+| association vers `Absence` (côté `1` ou `0..1`) | `-absence: ?Absence`, `+getAbsence(): ?Absence`, `+setAbsence(absence: ?Absence): void` |
+| association vers `Produit` (côté `0..*`, ex. `0..*` des deux côtés) | `-produit: array<Produit>`, `+getProduit(): array<Produit>`, `+setProduit(produit: array<Produit>): void` |
 
-- `__construct` : attributs non statiques dont le type ne commence pas par `?` (ni multiplicité `0..`/`*`).
+- `__construct` : attributs non statiques dont le type ne commence pas par `?` ni `array<` (ni multiplicité `0..`/`*`).
 - Associations : qui reçoit l'attribut ?
   1. flèche : la classe d'où part la flèche ;
   2. agrégation/composition : la classe côté losange (`Produit ◇── Categorie` → `categorie` dans Produit) ;

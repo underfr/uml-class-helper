@@ -190,4 +190,17 @@ assert.deepStrictEqual(applied, ['nom', 'prenom', 'salaire'])
 // Already there: nothing
 assert.deepStrictEqual(planInheritedParams(personne, [{ name: '__construct', parameters: [P('nom', 'string'), P('prenom', 'string')] }], ['id', 'nom', 'prenom']), [])
 
+// Held end many -> array<T>, single -> ?T; many-to-many goes to the diamond side only
+const Fournisseur = { name: 'Fournisseur' }
+const manyToMany = [{ end1: end(Produit, '0..*'), end2: end(Fournisseur, '0..*', shared) }]
+assert.deepStrictEqual(associationFields(Fournisseur, manyToMany).map(f => [f.name, f.type]), [['produit', 'array<Produit>']])
+assert.deepStrictEqual(associationFields(Produit, manyToMany), [])
+assert.strictEqual(associationFields(Produit, diagram)[0].type, '?Categorie') // 0..* -- 1
+assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), end2: end(Produit, '0..*', shared) }])[0].type, '?Categorie')
+// array<T> stays out of the constructor
+const arraySpecs = planAccessors([{ name: 'produit', type: 'array<Produit>', multiplicity: '' }], [], { ctor: true })
+assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [])
+assert.deepStrictEqual(byName(arraySpecs, 'getProduit').params[0].type, 'array<Produit>')
+assert.strictEqual(renamedType('array<Produit>', 'Produit', 'Article'), 'array<Article>')
+
 console.log('ok')
