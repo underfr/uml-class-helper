@@ -1,6 +1,6 @@
 // Run: node test.js
 const assert = require('assert')
-const { planAccessors, associationFields, missingAttributes, planSync, deletedWith } = require('./accessors')
+const { planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
 const byName = (specs, name) => specs.find(s => s.name === name)
@@ -152,5 +152,17 @@ assert.deepStrictEqual(planSync({ name: 'actif', type: 'bool', multiplicity: '' 
 ops = classOps()
 assert.deepStrictEqual(deletedWith(nom, ops), [ops[1], ops[2], ops[0].parameters[0]])
 assert.deepStrictEqual(deletedWith({ name: 'ville' }, ops), [ops[0].parameters[1]])
+
+// New attribute (type '' until edited) joins an existing constructor; nothing else to change
+ops = classOps()
+const fresh = { name: 'Attribute1', type: '', multiplicity: '' }
+assert.deepStrictEqual(planSync(fresh, fresh, ops, [...attrNames, 'Attribute1']),
+  [{ add: { name: 'Attribute1', type: '', multiplicity: '' }, to: ops[0], index: 2 }])
+
+// Class rename updates text types only
+assert.strictEqual(renamedType('?Categorie', 'Categorie', 'Famille'), '?Famille')
+assert.strictEqual(renamedType('Categorie', 'Categorie', 'Famille'), 'Famille')
+assert.strictEqual(renamedType('?CategorieMere', 'Categorie', 'Famille'), null)
+assert.strictEqual(renamedType({ name: 'Categorie' }, 'Categorie', 'Famille'), null) // real reference: StarUML follows it
 
 console.log('ok')

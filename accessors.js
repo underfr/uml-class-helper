@@ -177,4 +177,11 @@ function planSync (attr, next, ops, attrNames) {
   return changes
 }
 
-module.exports = { planAccessors, associationFields, missingAttributes, planSync, deletedWith }
+// Text type after renaming class `oldName` to `newName` (`?Categorie` -> `?Famille`), or null if unaffected
+function renamedType (t, oldName, newName) {
+  if (t === oldName) return newName
+  if (t === '?' + oldName) return '?' + newName
+  return null
+}
+
+module.exports = { planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType }

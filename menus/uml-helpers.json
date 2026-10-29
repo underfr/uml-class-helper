@@ -10,7 +10,9 @@
             { "label": "Generate Constructor, Getters & Setters", "id": "tools.uml-helpers.accessors", "command": "uml-helpers:accessors" },
             { "label": "Generate Constructor", "id": "tools.uml-helpers.constructor", "command": "uml-helpers:constructor" },
             { "label": "Generate Getters", "id": "tools.uml-helpers.getters", "command": "uml-helpers:getters" },
-            { "label": "Generate Setters", "id": "tools.uml-helpers.setters", "command": "uml-helpers:setters" }
+            { "label": "Generate Setters", "id": "tools.uml-helpers.setters", "command": "uml-helpers:setters" },
+            { "type": "separator" },
+            { "label": "Generate for Whole Diagram", "id": "tools.uml-helpers.diagram", "command": "uml-helpers:diagram" }
           ]
         }
       ]
@@ -25,7 +27,9 @@
           { "label": "Generate Constructor, Getters & Setters", "id": "uml-helpers.accessors", "command": "uml-helpers:accessors" },
           { "label": "Generate Constructor", "id": "uml-helpers.constructor", "command": "uml-helpers:constructor" },
           { "label": "Generate Getters", "id": "uml-helpers.getters", "command": "uml-helpers:getters" },
-          { "label": "Generate Setters", "id": "uml-helpers.setters", "command": "uml-helpers:setters" }
+          { "label": "Generate Setters", "id": "uml-helpers.setters", "command": "uml-helpers:setters" },
+          { "type": "separator" },
+          { "label": "Generate for Whole Diagram", "id": "uml-helpers.diagram", "command": "uml-helpers:diagram" }
         ]
       }
     ],

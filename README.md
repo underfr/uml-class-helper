@@ -15,6 +15,7 @@ Puis redémarrer StarUML.
 ## Utilisation
 
 Sélectionner une classe (ou seulement certains attributs), puis clic droit → **UML Helpers**, ou `Cmd/Ctrl+Alt+G`.
+**Generate for Whole Diagram** traite toutes les classes du diagramme ouvert.
 
 | Modèle | Généré |
 |---|---|
@@ -35,7 +36,10 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 
 ## Automatique
 
-- Toute nouvelle classe reçoit `-id: ?int`.
+- Toute nouvelle classe reçoit `-id: ?int` avec `getId()`/`setId()`.
+- Ajouter un attribut crée son getter, son setter et son paramètre dans le `__construct` existant ; le renommer/typer ensuite met tout à jour.
 - Changer le type d'un attribut (`-nom: string` → `-nom: int`) met à jour son getter, son setter et son paramètre de `__construct`. Passer en `?string` le retire du constructeur, repasser en `string` l'y remet.
 - Renommer un attribut (`-nom` → `-test`) renomme `getNom`/`setNom`/`isNom` et le paramètre dans le setter et le `__construct`.
 - Supprimer un attribut supprime son getter, son setter et son paramètre du `__construct` (2 `Ctrl+Z` pour tout récupérer).
+- Supprimer une association supprime l'attribut qu'elle avait généré (`-categorie: ?Categorie`) et ses méthodes, y compris quand on supprime la classe à l'autre bout.
+- Renommer une classe met à jour les types texte `?Ancien` → `?Nouveau` partout.
