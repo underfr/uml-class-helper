@@ -49,29 +49,50 @@ assert.deepStrictEqual(byName(planAccessors([
 ], [], { ctor: true }), '__construct').params.map(p => p.name), ['roles'])
 
 // Association ends
-const Personne = { name: 'Personne' }
-const Adresse = { name: 'Adresse' }
-const Commande = { name: 'Commande' }
-const end = (reference, navigable = 'unspecified', name = '', multiplicity = '') =>
-  ({ reference, navigable, name, multiplicity, isReadOnly: false })
+const [Personne, Adresse, Commande, Categorie, Produit, Ligne, Ticket, Vendeur] =
+  ['Personne', 'Adresse', 'Commande', 'Categorie', 'Produit', 'ProduitTicketQuantite', 'Ticket', 'Vendeur'].map(name => ({ name }))
+const end = (reference, multiplicity = '', extra = {}) =>
+  ({ reference, multiplicity, navigable: 'unspecified', aggregation: 'none', name: '', isReadOnly: false, ...extra })
+const fieldNames = (cls, list) => associationFields(cls, list).map(f => f.name)
+
+// Aggregations from the reported diagram (StarUML's Aggregation tool puts the diamond on end2):
+// the class on the diamond side holds the other one, never the reverse
+const shared = { aggregation: 'shared' }
+const diagram = [
+  { end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) },
+  { end1: end(Produit, '1'), end2: end(Ligne, '0..*', shared) },
+  { end1: end(Ticket, '1'), end2: end(Ligne, '0..*', shared) },
+  { end1: end(Vendeur, '1'), end2: end(Ticket, '0..*', shared) }
+]
+assert.deepStrictEqual(fieldNames(Produit, diagram), ['categorie'])
+assert.deepStrictEqual(fieldNames(Ligne, diagram), ['produit', 'ticket'])
+assert.deepStrictEqual(fieldNames(Ticket, diagram), ['vendeur'])
+assert.deepStrictEqual(fieldNames(Categorie, diagram), [])
+assert.deepStrictEqual(fieldNames(Vendeur, diagram), [])
+assert.deepStrictEqual(fieldNames(Produit, [{ end1: end(Categorie), end2: end(Produit, '', { aggregation: 'composite' }) }]), ['categorie'])
+
+// Arrows win: Personne --> Adresse "domicile", Personne --> Commande 0..*, Personne x-- Adresse
 const assocs = [
-  // Personne --> Adresse (directed, role "domicile", 1)
-  { end1: end(Personne), end2: end(Adresse, 'navigable', 'domicile', '1') },
-  // Personne -- Commande (no arrow: both ways, unnamed role, 0..*)
-  { end1: end(Commande, 'unspecified', '', '0..*'), end2: end(Personne, 'unspecified', '', '1') },
-  // Personne x-- Adresse (notNavigable toward Adresse)
-  { end1: end(Personne), end2: end(Adresse, 'notNavigable', 'ancienne') }
+  { end1: end(Personne), end2: end(Adresse, '1', { navigable: 'navigable', name: 'domicile' }) },
+  { end1: end(Personne), end2: end(Commande, '0..*', { navigable: 'navigable' }) },
+  { end1: end(Personne), end2: end(Adresse, '', { navigable: 'notNavigable', name: 'ancienne' }) }
 ]
 const fields = associationFields(Personne, assocs)
 assert.deepStrictEqual(fields.map(f => f.name), ['domicile', 'commande'])
 assert.strictEqual(fields[0].type, '?Adresse')
-// Other side of a directed association gets nothing; undirected gets the opposite end
 assert.deepStrictEqual(associationFields(Adresse, assocs.slice(0, 1)), [])
-assert.deepStrictEqual(associationFields(Commande, assocs).map(f => f.name), ['personne'])
+// Only the crossed side is blocked
+assert.deepStrictEqual(fieldNames(Adresse, assocs.slice(2)), ['personne'])
+
+// Plain association: the many side holds the one side; 1--1 goes both ways
+const plain = [{ end1: end(Commande, '0..*'), end2: end(Personne, '1') }]
+assert.deepStrictEqual(fieldNames(Commande, plain), ['personne'])
+assert.deepStrictEqual(fieldNames(Personne, plain), [])
+assert.deepStrictEqual(fieldNames(Personne, [{ end1: end(Personne, '1'), end2: end(Adresse, '1') }]), ['adresse'])
 // Self-association: both ends belong to the class
-assert.deepStrictEqual(associationFields(Personne, [
-  { end1: end(Personne, 'unspecified', 'parent'), end2: end(Personne, 'unspecified', 'enfant') }
-]).map(f => f.name), ['enfant', 'parent'])
+assert.deepStrictEqual(fieldNames(Personne, [
+  { end1: end(Personne, '', { name: 'parent' }), end2: end(Personne, '', { name: 'enfant' }) }
+]), ['enfant', 'parent'])
 
 // Always nullable: __construct() empty, getDomicile(): ?Adresse, setDomicile(domicile: ?Adresse): void
 const assocSpecs = planAccessors(fields, [], { ctor: true })

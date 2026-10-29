@@ -8,18 +8,33 @@ const param = (name, attr) => ({ name, type: attr.type, multiplicity: attr.multi
 // `?int`, or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
 const optional = attr => typeName(attr.type).startsWith('?') || /^(0|\*)/.test((attr.multiplicity || '').trim())
 
+const isMany = end => {
+  const upper = (end.multiplicity || '').split('..').pop().trim()
+  return upper === '*' || Number(upper) > 1
+}
+const hasDiamond = end => !!end.aggregation && end.aggregation !== 'none'
+
+// Whether the class at `own` holds a reference to the class at `other`
+function holds (own, other) {
+  if (other.navigable === 'notNavigable') return false
+  if (own.navigable === 'navigable' || other.navigable === 'navigable') return other.navigable === 'navigable'
+  // Aggregation/composition: the class on the diamond side holds the other one
+  if (hasDiamond(own) || hasDiamond(other)) return hasDiamond(own)
+  // Plain association: the "many" side holds the "one" side (Produit 0..* -- 1 Categorie)
+  if (isMany(own) !== isMany(other)) return isMany(own)
+  return true
+}
+
 /**
  * Association ends that are properties of `cls`, as attribute-like objects typed `?Class`.
- * Arrows decide when present; an association without arrows is navigable both ways.
+ * Arrows first, then the diamond, then multiplicities decide; otherwise both sides.
  * An unnamed role defaults to the class name (Adresse -> adresse).
  */
 function associationFields (cls, associations) {
   const fields = []
   for (const assoc of associations) {
-    const directed = assoc.end1.navigable === 'navigable' || assoc.end2.navigable === 'navigable'
-    const navigable = end => end.navigable === 'navigable' || (!directed && end.navigable === 'unspecified')
     for (const [own, other] of [[assoc.end1, assoc.end2], [assoc.end2, assoc.end1]]) {
-      if (own.reference !== cls || !navigable(other)) continue
+      if (own.reference !== cls || !holds(own, other)) continue
       fields.push({
         name: other.name || lcfirst(typeName(other.reference)),
         // shortcut: plain string, so renaming the class won't update it; needed for the `?` prefix

@@ -25,7 +25,12 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 | association vers `Absence` | `-absence: ?Absence`, `+getAbsence(): ?Absence`, `+setAbsence(absence: ?Absence): void` |
 
 - `__construct` : attributs non statiques dont le type ne commence pas par `?` (ni multiplicité `0..`/`*`).
-- Associations : flèche respectée ; sans flèche, navigable dans les deux sens ; rôle vide → nom de la classe.
+- Associations : qui reçoit l'attribut ?
+  1. flèche : la classe d'où part la flèche ;
+  2. agrégation/composition : la classe côté losange (`Produit ◇── Categorie` → `categorie` dans Produit) ;
+  3. association simple : le côté `0..*` reçoit le côté `1` ; sinon les deux.
+  
+  Rôle vide → nom de la classe.
 - Rien n'est dupliqué si on relance ; un seul `Ctrl+Z` annule tout.
 
 ## Automatique
