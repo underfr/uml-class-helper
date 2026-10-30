@@ -199,6 +199,12 @@ assert.deepStrictEqual(associationFields(Fournisseur, manyToMany).map(f => [f.na
 assert.deepStrictEqual(associationFields(Produit, manyToMany), [])
 assert.strictEqual(associationFields(Produit, diagram)[0].type, '?Categorie') // 0..* -- 1
 assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), end2: end(Produit, '0..*', shared) }])[0].type, '?Categorie')
+// Composition: never null, so no `?` (and in the constructor); many stays array<T>
+const composite = { aggregation: 'composite' }
+assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), end2: end(Produit, '0..*', composite) }])[0].type, 'Categorie')
+assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..*'), end2: end(Produit, '1', composite) }])[0].type, 'array<Categorie>')
+assert.deepStrictEqual(byName(planAccessors(associationFields(Produit, [{ end1: end(Categorie, '1'), end2: end(Produit, '', composite) }]), [], { ctor: true }), '__construct').params,
+  [{ name: 'categorie', type: 'Categorie', multiplicity: '' }])
 // array<T> goes in the constructor
 const arraySpecs = planAccessors([{ name: 'produit', type: 'array<Produit>', multiplicity: '' }], [], { ctor: true })
 assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [{ name: 'produit', type: 'array<Produit>', multiplicity: '' }])
@@ -222,6 +228,8 @@ assert.deepStrictEqual(edit(a => { a.end1.multiplicity = '0..*' }).updates.map(u
 let moved = edit(a => { a.end1.aggregation = 'shared'; a.end2.aggregation = 'none' })
 assert.deepStrictEqual(moved.deletes, [{ attr: generatedAttr }])
 assert.deepStrictEqual(moved.creates.map(c => [c.holder, c.field.name, c.field.type]), [[Categorie, 'produits', 'array<Produit>']])
+// Aggregation -> composition: retyped Categorie
+assert.deepStrictEqual(edit(a => { a.end2.aggregation = 'composite' }).updates.map(u => u.next.type), ['Categorie'])
 // Nothing relevant changed -> nothing
 assert.deepStrictEqual(edit(() => {}), { updates: [], deletes: [], creates: [] })
 // Never generated -> left alone

@@ -40,11 +40,13 @@ function holds (own, other) {
 
 /**
  * Attributes an association gives its classes: [{ holder, from: 'end1'|'end2', field }], `field` being
- * attribute-like and typed `array<Class>` when the held end is many (0..*, 1..*), `?Class` otherwise (1, 0..1).
+ * attribute-like and typed `array<Class>` when the held end is many (0..*, 1..*), `?Class` otherwise (1, 0..1),
+ * `Class` in a composition (never null).
  * Arrows first, then the diamond, then multiplicities decide; otherwise both sides.
  * An unnamed role defaults to the class name (Adresse -> adresse, plural when many: produits).
  */
 function heldFields (assoc) {
+  const nullable = assoc.end1.aggregation !== 'composite' && assoc.end2.aggregation !== 'composite' ? '?' : ''
   const held = []
   for (const [own, other, from] of [[assoc.end1, assoc.end2, 'end2'], [assoc.end2, assoc.end1, 'end1']]) {
     if (!holds(own, other)) continue
@@ -54,7 +56,7 @@ function heldFields (assoc) {
       field: {
         name: other.name || (isMany(other) ? plural : x => x)(lcfirst(typeName(other.reference))),
         // Plain string (needed for `?`/`array<>`); renamedType keeps it in line when the class is renamed
-        type: isMany(other) ? `array<${typeName(other.reference)}>` : '?' + typeName(other.reference),
+        type: isMany(other) ? `array<${typeName(other.reference)}>` : nullable + typeName(other.reference),
         multiplicity: '',
         isReadOnly: other.isReadOnly,
         isStatic: false

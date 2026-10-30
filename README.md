@@ -26,6 +26,7 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 | `-actif: bool` | `+isActif(): bool` |
 | `-code: string {readOnly}` | getter seulement |
 | association vers `Absence` (côté `1` ou `0..1`) | `-absence: ?Absence`, `+getAbsence(): ?Absence`, `+setAbsence(absence: ?Absence): void` |
+| composition vers `Moteur` (côté `1` ou `0..1`) | `-moteur: Moteur` (jamais null, donc sans `?` et dans le `__construct`), getter, setter |
 | association vers `Produit` (côté `0..*`) | `-produits: array<Produit>`, `+getProduits()`, `+setProduits(produits: array<Produit>): void`, `+addProduit(produit: Produit): void`, `+removeProduit(produit: Produit): void` |
 | classe qui implémente une interface / hérite d'une classe abstraite | copie des méthodes de l'interface / des méthodes abstraites |
 
@@ -52,6 +53,6 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
 - Renommer une classe met à jour les types texte `?Ancien` → `?Nouveau` partout.
 - Tracer un héritage retire le `-id` de l'enfant (le parent l'a déjà) et ajoute les paramètres du parent dans son `__construct` s'il existe.
 - Ajouter, renommer, retyper ou supprimer un attribut du parent met aussi à jour le `__construct` des classes filles.
-- Modifier une association (nom de rôle, multiplicité, flèche, losange, classe à un bout) renomme, retype ou déplace l'attribut qu'elle avait généré (`?Type` ↔ `array<Type>`, losange changé de côté…). Une association jamais générée n'est pas touchée.
+- Modifier une association (nom de rôle, multiplicité, flèche, losange, classe à un bout) renomme, retype ou déplace l'attribut qu'elle avait généré (`?Type` ↔ `array<Type>`, agrégation ↔ composition `?Type` ↔ `Type`, losange changé de côté…). Une association jamais générée n'est pas touchée.
 - Supprimer un héritage retire les paramètres hérités du `__construct` de l'enfant (et de ses filles) et lui remet `-id: ?int`.
 - Implémenter une interface copie ses méthodes dans la classe ; hériter d'une classe copie ses méthodes abstraites dans les filles concrètes. Renommer, modifier ou supprimer la méthode d'origine met à jour les copies.
