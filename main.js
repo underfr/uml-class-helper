@@ -1,5 +1,5 @@
 const {
-  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, opSpec, requiredOps, syncImplementation,
   lintClass, lintAssociation
 } = require('./accessors')
@@ -99,6 +99,8 @@ function addGenerated (builder, cls, { attrs, newAttrs }, options) {
   }
   const specs = planAccessors(attrs, cls.operations.map(o => o.name), options, inheritedAttrs(cls))
   for (const spec of specs) insertOperation(builder, cls, spec)
+  // planAccessors only creates a missing __construct: new attributes go into an existing one too
+  applyChanges(builder, planInheritedParams(newAttrs, cls.operations, [...ctorNames(cls), ...newAttrs.map(f => f.name)]))
   return newAttrs.length + specs.length
 }
 
@@ -163,6 +165,40 @@ function generate (options, models = app.selections.getSelectedModels()) {
   app.toast.info(count > 0 ? `${count} élément(s) généré(s).` : 'Rien à générer (déjà présents).')
 }
 
+// Several associations giving a class the same attribute (two compositions to User, both `user`): asks a role
+// name for each, the association highlighted in the diagram, then names them all in one undo step
+async function nameClashingRoles (classes) {
+  const named = []
+  for (const cls of classes) {
+    const chosen = new Set()
+    for (const h of roleClashes(cls, associationsOf(cls))) {
+      const end = h.assoc[h.from]
+      const view = app.repository.getViewsOf(h.assoc).find(v => v._parent instanceof type.Diagram)
+      if (view) app.diagrams.selectInDiagram(view)
+      const { buttonId, returnValue } = await app.dialogs.showInputDialog(
+        `${cls.name} a plusieurs associations vers ${end.reference.name} : nom de l'attribut pour l'association sélectionnée ?`, h.field.name)
+      const name = (returnValue || '').trim()
+      if (buttonId !== 'ok' || !name) continue
+      if (chosen.has(name)) {
+        app.toast.warning(`« ${name} » déjà choisi dans ${cls.name} : association non renommée.`)
+        continue
+      }
+      chosen.add(name)
+      named.push({ end, name })
+    }
+  }
+  // The role names rename the attributes already generated (onOperationExecuted), then generate adds the others
+  runOperation('name association roles', builder => {
+    for (const { end, name } of named) builder.fieldAssign(end, 'name', name)
+  })
+}
+
+// generate, after asking names for clashing association roles; the selection is read first, the dialogs change it
+async function generateNaming (options, models = app.selections.getSelectedModels()) {
+  await nameClashingRoles(models.filter(m => m instanceof type.UMLClassifier))
+  generate(options, models)
+}
+
 const diagramClasses = diagram => diagram.ownedViews.filter(v => v instanceof type.UMLClassView).map(v => v.model)
 
 function generateDiagram () {
@@ -172,7 +208,7 @@ function generateDiagram () {
     app.toast.warning('Aucune classe dans le diagramme courant.')
     return
   }
-  generate(ALL, classes)
+  return generateNaming(ALL, classes)
 }
 
 // -id: ?int as first attribute, with its getter/setter
@@ -236,9 +272,16 @@ function onInheritance (child) {
 // State captured in beforeExecuteOperation, reconciled once that operation has run
 let pending = null
 
+const associationsOf = cls => app.repository.getRelationshipsOf(cls, r => r instanceof type.UMLAssociation)
+
 // Generated attributes of an association as they are now, each with the attribute found in its holder
-const assocSnapshot = assoc => heldFields(assoc).map(h =>
-  ({ ...h, attr: h.holder.attributes.find(a => a.name === h.field.name && a.type === h.field.type) }))
+// (none when another association of the holder owns that name and type)
+const assocSnapshot = assoc => heldFields(assoc).map(h => ({
+  ...h,
+  attr: ownsField(assoc, h, associationsOf(h.holder))
+    ? h.holder.attributes.find(a => a.name === h.field.name && a.type === h.field.type)
+    : undefined
+}))
 
 function capture (operation) {
   const removedIds = new Set(operation.ops.filter(op => op.op === 'R').map(op => op.arg._id)) // 'R' = REMOVE
@@ -252,9 +295,7 @@ function capture (operation) {
   for (const root of removed) {
     root.traverse(e => {
       if (e instanceof type.UMLAssociation) {
-        for (const cls of new Set([e.end1.reference, e.end2.reference])) {
-          for (const f of associationFields(cls, [e])) assocFields.push({ cls, name: f.name, type: f.type })
-        }
+        for (const h of assocSnapshot(e).filter(s => s.attr)) assocFields.push({ cls: h.holder, name: h.field.name, type: h.field.type })
       } else if (e instanceof type.UMLGeneralization && e.source instanceof type.UMLClass) {
         inheritances.push({ child: e.source, names: inheritedAttrs(e.source).map(a => a.name) })
       }
@@ -530,6 +571,28 @@ function selfTest () {
     app.engine.deleteElements([assoc], [])
     check('Association supprimée : attribut et méthodes supprimés', !attr(P, 'famille') && !has(P, 'getFamille'))
 
+    // Two compositions Chocoblast ◆── User: one -user until the roles are named
+    const uView = node('UMLClass', 980, 'User')
+    const kView = node('UMLClass', 1220, 'Chocoblast')
+    const K = kView.model
+    const blast = () => {
+      const a = edge('UMLAssociation', uView, kView).model
+      app.engine.setProperty(a.end1, 'multiplicity', '1')
+      app.engine.setProperty(a.end2, 'aggregation', 'composite')
+      return a
+    }
+    const [b1, b2] = [blast(), blast()]
+    generate(ALL, [K])
+    check('2 compositions vers User : un seul -user, 2 rôles à nommer', attr(K, 'user') && K.attributes.length === 2 && roleClashes(K, [b1, b2]).length === 2)
+    app.engine.setProperty(b2.end1, 'name', 'blasted')
+    check('Rôle « blasted » sur la 2e : -user de la 1re intact', attr(K, 'user') && !attr(K, 'blasted'))
+    app.engine.setProperty(b1.end1, 'name', 'target')
+    generate(ALL, [K])
+    check('Rôles nommés : -target: User, -blasted: User, __construct(target, blasted)', attr(K, 'target') && attr(K, 'blasted') &&
+      attr(K, 'blasted').type === 'User' && !attr(K, 'user') && has(K, 'getBlasted') && ctorParams(K) === '["target","blasted"]')
+    app.engine.deleteElements([b2], [])
+    check('2e composition supprimée : -blasted supprimé, -target reste', !attr(K, 'blasted') && attr(K, 'target'))
+
     const eView = node('UMLClass', 500, 'Employe')
     const E = eView.model
     newAttr(E, 'salaire', 'float')
@@ -572,10 +635,10 @@ function init () {
   app.factory.on('elementCreated', onElementCreated)
   app.repository.on('beforeExecuteOperation', onBeforeOperation)
   app.repository.on('operationExecuted', onOperationExecuted)
-  app.commands.register('uml-helpers:accessors', () => generate(ALL), 'Generate Constructor, Getters & Setters')
-  app.commands.register('uml-helpers:constructor', () => generate({ ctor: true, getters: false, setters: false }), 'Generate Constructor')
-  app.commands.register('uml-helpers:getters', () => generate({ getters: true, setters: false }), 'Generate Getters')
-  app.commands.register('uml-helpers:setters', () => generate({ getters: false, setters: true }), 'Generate Setters')
+  app.commands.register('uml-helpers:accessors', () => generateNaming(ALL), 'Generate Constructor, Getters & Setters')
+  app.commands.register('uml-helpers:constructor', () => generateNaming({ ctor: true, getters: false, setters: false }), 'Generate Constructor')
+  app.commands.register('uml-helpers:getters', () => generateNaming({ getters: true, setters: false }), 'Generate Getters')
+  app.commands.register('uml-helpers:setters', () => generateNaming({ getters: false, setters: true }), 'Generate Setters')
   app.commands.register('uml-helpers:diagram', generateDiagram, 'Generate for Whole Diagram')
   app.commands.register('uml-helpers:check', checkDiagram, 'Check Diagram')
   app.commands.register('uml-helpers:self-test', selfTest, 'Run Self-Test')

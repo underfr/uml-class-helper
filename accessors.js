@@ -71,6 +71,22 @@ function associationFields (cls, associations) {
   return associations.flatMap(heldFields).filter(h => h.holder === cls).map(h => h.field)
 }
 
+// heldFields entries of `assocs` held by `cls`, each with its association
+const heldBy = (cls, assocs) => assocs.flatMap(assoc => heldFields(assoc).map(h => ({ ...h, assoc }))).filter(h => h.holder === cls)
+
+// Unnamed roles giving `cls` the same attribute as another association (two compositions to User, both `user`)
+function roleClashes (cls, assocs) {
+  const held = heldBy(cls, assocs)
+  return held.filter(h => !h.assoc[h.from].name && held.some(o => o !== h && o.field.name === h.field.name))
+}
+
+// Whether entry `h` of `assoc` generated the attribute matching it: when several associations of the holder
+// (`holderAssocs`) give the same name and type, missingAttributes created it for the first one only
+function ownsField (assoc, h, holderAssocs) {
+  const first = heldBy(h.holder, holderAssocs).find(o => o.field.name === h.field.name && o.field.type === h.field.type)
+  return !!first && first.assoc === assoc && first.from === h.from
+}
+
 /**
  * How the attributes generated from one association change after it was edited (role, multiplicity,
  * arrow, diamond, class at an end, class renamed). `before` is heldFields from before the edit, each with
@@ -358,7 +374,7 @@ function lintAssociation (assoc) {
 }
 
 module.exports = {
-  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
   opSpec, requiredOps, syncImplementation, lintClass, lintAssociation
 }

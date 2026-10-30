@@ -1,7 +1,7 @@
 // Run: node test.js
 const assert = require('assert')
 const {
-  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
   opSpec, requiredOps, syncImplementation, lintClass, lintAssociation
 } = require('./accessors')
@@ -205,6 +205,27 @@ assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), e
 assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..*'), end2: end(Produit, '1', composite) }])[0].type, 'array<Categorie>')
 assert.deepStrictEqual(byName(planAccessors(associationFields(Produit, [{ end1: end(Categorie, '1'), end2: end(Produit, '', composite) }]), [], { ctor: true }), '__construct').params,
   [{ name: 'categorie', type: 'Categorie', multiplicity: '' }])
+
+// Two compositions Chocoblast ◆-- User: both default to `user`, only the first one generated it
+const [User, Chocoblast] = [{ name: 'User' }, { name: 'Chocoblast' }]
+const blast = () => ({ end1: end(User, '1'), end2: end(Chocoblast, '', composite) })
+const [b1, b2] = [blast(), blast()]
+assert.deepStrictEqual(missingAttributes([], associationFields(Chocoblast, [b1, b2])).map(f => f.name), ['user'])
+assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]).map(h => [h.assoc, h.from]), [[b1, 'end1'], [b2, 'end1']])
+assert.deepStrictEqual(roleClashes(User, [b1, b2]), [])
+assert.deepStrictEqual(heldFields(b1).map(h => ownsField(b1, h, [b1, b2])), [true])
+assert.deepStrictEqual(heldFields(b2).map(h => ownsField(b2, h, [b1, b2])), [false])
+// A named role is never asked again; only the unnamed one clashing with it is
+b2.end1.name = 'user'
+assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]).map(h => h.assoc), [b1])
+b1.end1.name = 'target'
+b2.end1.name = 'blasted'
+assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]), [])
+assert.deepStrictEqual(associationFields(Chocoblast, [b1, b2]).map(f => [f.name, f.type]), [['target', 'User'], ['blasted', 'User']])
+// Existing __construct(target): the new blasted goes after it
+const targetCtor = { name: '__construct', parameters: [P('target', 'User')] }
+assert.deepStrictEqual(planInheritedParams([{ name: 'blasted', type: 'User', multiplicity: '' }], [targetCtor], ['id', 'target', 'blasted'])
+  .map(c => [c.add.name, c.index]), [['blasted', 1]])
 // array<T> goes in the constructor
 const arraySpecs = planAccessors([{ name: 'produit', type: 'array<Produit>', multiplicity: '' }], [], { ctor: true })
 assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [{ name: 'produit', type: 'array<Produit>', multiplicity: '' }])

@@ -37,8 +37,9 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
   3. association simple : le côté `0..*` reçoit le côté `1` ; sinon les deux.
   
   Rôle vide → nom de la classe, au pluriel côté `0..*` (pluriels réguliers ; sinon nommer le rôle).
+  Plusieurs associations qui donneraient le même attribut (deux compositions `Chocoblast ◆── User` → `user`) : la génération demande un nom pour chacune, l'association concernée étant sélectionnée dans le diagramme (`target`, `blasted`), et l'enregistre comme nom de rôle.
 - Héritage (`Employe ──▷ Personne`) : le `__construct` de l'enfant prend d'abord les paramètres du parent (`__construct(nom, prenom, salaire)`) ; getters/setters seulement pour ses propres attributs.
-- Rien n'est dupliqué si on relance ; un seul `Ctrl+Z` annule tout.
+- Rien n'est dupliqué si on relance ; un `__construct` existant reçoit les nouveaux attributs ; un seul `Ctrl+Z` annule tout (un de plus si des noms de rôle ont été demandés).
 
 ## Automatique
 
