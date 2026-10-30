@@ -65,3 +65,8 @@ Chaque changement et tout ce qu'il entraîne s'annulent en un seul `Ctrl+Z`.
 - Supprimer un héritage retire les paramètres hérités du `__construct` de l'enfant (et de ses filles) et lui remet `-id: ?int`. Le rebrancher sur un autre parent remplace les paramètres de l'ancien par ceux du nouveau.
 - Implémenter une interface copie ses méthodes dans la classe, y compris celles des interfaces qu'elle étend ; hériter d'une classe copie ses méthodes abstraites dans les filles concrètes. Renommer, modifier ou supprimer la méthode d'origine met à jour les copies ; supprimer la flèche « implémente », l'héritage ou l'extension d'interface les retire.
 - Une copie garde un lien caché vers sa méthode d'origine : une méthode écrite à la main avec le même nom n'est jamais modifiée ni supprimée. Les copies faites avant la 0.9.0 n'ont pas ce lien : supprime-les et relance Generate pour qu'elles soient suivies.
+
+## Développement
+
+`node test.js` teste la logique ; **Run Self-Test** vérifie le reste dans StarUML.
+À chaque push sur `master`, GitHub Actions lance les tests puis crée la release `vX.Y.Z` de la version de `package.json` si elle n'existe pas encore : changer la version pour publier une release.
