@@ -1,5 +1,6 @@
 const {
-  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  renamedType, planInheritedParams, droppedInheritedParams
 } = require('./accessors')
 
 const ALL = { ctor: true, getters: true, setters: true }
@@ -126,17 +127,20 @@ function generateDiagram () {
   generate(ALL, classes)
 }
 
+// -id: ?int as first attribute, with its getter/setter
+function addId (builder, cls) {
+  const id = Object.assign(new type.UMLAttribute(), { _parent: cls, name: 'id', visibility: 'private', type: '?int' })
+  builder.insert(id)
+  builder.fieldInsertAt(cls, 'attributes', id, 0)
+  addGenerated(builder, cls, { attrs: [id], newAttrs: [] }, { getters: true, setters: true })
+}
+
 // Right after the user creates an element (separate undo step):
 // a class gets -id: ?int with its getter/setter, an attribute gets its getter/setter and constructor param
 function onElementCreated (model) {
   try {
     if (model instanceof type.UMLClass && !model.attributes.some(a => a.name === 'id')) {
-      const id = Object.assign(new type.UMLAttribute(), { _parent: model, name: 'id', visibility: 'private', type: '?int' })
-      runOperation('add id', builder => {
-        builder.insert(id)
-        builder.fieldInsertAt(model, 'attributes', id, 0)
-        addGenerated(builder, model, { attrs: [id], newAttrs: [] }, { getters: true, setters: true })
-      })
+      runOperation('add id', builder => addId(builder, model))
     } else if (isClassAttribute(model)) {
       const cls = model._parent
       runOperation('add accessors', builder => {
@@ -170,26 +174,49 @@ function onInheritance (child) {
   })
 }
 
-// Deletions seen in beforeExecuteOperation, cleaned up once that operation has run
-let pendingDelete = null
+// State captured in beforeExecuteOperation, reconciled once that operation has run
+let pending = null
 
-function planDeletes (operation) {
+// Generated attributes of an association as they are now, each with the attribute found in its holder
+const assocSnapshot = assoc => heldFields(assoc).map(h =>
+  ({ ...h, attr: h.holder.attributes.find(a => a.name === h.field.name && a.type === h.field.type) }))
+
+function capture (operation) {
   const removedIds = new Set(operation.ops.filter(op => op.op === 'R').map(op => op.arg._id)) // 'R' = REMOVE
   const removed = [...removedIds].map(id => app.repository.get(id)).filter(Boolean)
   // Attributes deleted on their own (not along with their class)
   const attrs = removed.filter(e => isClassAttribute(e) && !removedIds.has(e._parent._id))
     .map(a => ({ cls: a._parent, name: a.name }))
-  // Associations deleted, including those owned by a deleted class: the attribute they generated
+  // Associations and inheritances deleted, including those owned by a deleted class
   const assocFields = []
+  const inheritances = []
   for (const root of removed) {
     root.traverse(e => {
-      if (!(e instanceof type.UMLAssociation)) return
-      for (const cls of new Set([e.end1.reference, e.end2.reference])) {
-        for (const f of associationFields(cls, [e])) assocFields.push({ cls, name: f.name, type: f.type })
+      if (e instanceof type.UMLAssociation) {
+        for (const cls of new Set([e.end1.reference, e.end2.reference])) {
+          for (const f of associationFields(cls, [e])) assocFields.push({ cls, name: f.name, type: f.type })
+        }
+      } else if (e instanceof type.UMLGeneralization && e.source instanceof type.UMLClass) {
+        inheritances.push({ child: e.source, names: inheritedAttrs(e.source).map(a => a.name) })
       }
     })
   }
-  return attrs.length + assocFields.length > 0 ? { operation, attrs, assocFields } : null
+  // Associations edited: an end's role/multiplicity/arrow/diamond/class, or a class renamed (default role)
+  const edited = new Set()
+  for (const op of operation.ops) {
+    if (op.op !== 'a') continue // 'a' = FIELD_ASSIGN
+    const elem = app.repository.get(op.arg._id)
+    if (elem instanceof type.UMLAssociationEnd && elem._parent instanceof type.UMLAssociation &&
+      ['name', 'multiplicity', 'navigable', 'aggregation', 'reference'].includes(op.arg.f)) {
+      edited.add(elem._parent)
+    } else if (elem instanceof type.UMLClassifier && op.arg.f === 'name') {
+      for (const r of app.repository.getRelationshipsOf(elem, r => r instanceof type.UMLAssociation)) edited.add(r)
+    }
+  }
+  const assocs = [...edited].filter(a => !removedIds.has(a._id)).map(assoc => ({ assoc, before: assocSnapshot(assoc) }))
+  return attrs.length + assocFields.length + inheritances.length + assocs.length > 0
+    ? { operation, attrs, assocFields, inheritances, assocs }
+    : null
 }
 
 // When an attribute's name/type/multiplicity or a class name is edited, update what depends on it.
@@ -198,7 +225,7 @@ function planDeletes (operation) {
 function onBeforeOperation (operation) {
   if (operation.bypass) return
   try {
-    pendingDelete = planDeletes(operation)
+    pending = capture(operation)
     const changedAttrs = new Map()
     const renamedClasses = []
     for (const op of operation.ops) {
@@ -241,15 +268,16 @@ function onBeforeOperation (operation) {
   }
 }
 
-// After a deletion: remove the getter, setter and constructor param of deleted attributes, and the
-// attribute (with its methods) generated by a deleted association.
-// Separate operation through the engine, which also removes their views (second undo step).
+// After the user's operation, as separate operations through public APIs whose own events cascade
+// (getters, setters, constructor params): extra undo steps.
 function onOperationExecuted (operation) {
-  if (!pendingDelete || pendingDelete.operation !== operation) return
-  const { attrs, assocFields } = pendingDelete
-  pendingDelete = null
+  if (!pending || pending.operation !== operation) return
+  const { attrs, assocFields, inheritances, assocs } = pending
+  pending = null // nested operations below capture their own
+  const alive = e => !!app.repository.get(e._id)
   try {
-    const alive = cls => app.repository.get(cls._id)
+    // Deleted attribute: its getter, setter and constructor params (subclasses too).
+    // Deleted association: the attribute it generated, with its methods.
     const orphans = []
     for (const { cls, name, type: t } of assocFields) {
       const attr = alive(cls) && cls.attributes.find(a => a.name === name && a.type === t)
@@ -261,8 +289,46 @@ function onOperationExecuted (operation) {
       for (const child of descendantsOf(cls)) orphans.push(...deletedWith({ name }, ctorOnly(child)))
     }
     if (orphans.length > 0) app.engine.deleteElements([...new Set(orphans)], [])
+
+    // Deleted inheritance: params no longer inherited leave the constructors; the child gets its id back
+    const dropped = inheritances.filter(i => alive(i.child))
+    if (dropped.length > 0) {
+      runOperation('remove inherited params', builder => {
+        for (const { child, names } of dropped) {
+          const now = inheritedAttrs(child).map(a => a.name)
+          for (const cls of [child, ...descendantsOf(child)]) {
+            const ctor = ctorOnly(cls)[0]
+            applyChanges(builder, droppedInheritedParams(ctor, names, now, cls.attributes.map(a => a.name)))
+          }
+          if (!child.attributes.some(a => a.name === 'id') && !now.includes('id')) addId(builder, child)
+        }
+      })
+    }
+
+    // Edited association: rename/retype, move or remove the attribute it generated
+    for (const { assoc, before } of assocs) {
+      if (!alive(assoc)) continue
+      const plan = planAssocUpdate(before, heldFields(assoc))
+      for (const { attr, next } of plan.updates) {
+        if (alive(attr) && (attr.name !== next.name || attr.type !== next.type)) {
+          app.engine.setProperties(attr, { name: next.name, type: next.type })
+        }
+      }
+      const gone = plan.deletes.map(d => d.attr).filter(alive)
+      if (gone.length > 0) app.engine.deleteElements(gone, [])
+      for (const { holder, field } of plan.creates) {
+        if (!alive(holder) || holder.attributes.some(a => a.name === field.name)) continue
+        // Through the factory so onElementCreated adds its getter, setter and constructor params
+        app.factory.createModel({
+          id: 'UMLAttribute',
+          parent: holder,
+          field: 'attributes',
+          modelInitializer: m => Object.assign(m, { name: field.name, type: field.type, visibility: 'private' })
+        })
+      }
+    }
   } catch (err) {
-    console.error('uml-helpers: delete failed', err)
+    console.error('uml-helpers: reconcile failed', err)
   }
 }
 

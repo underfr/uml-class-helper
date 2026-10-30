@@ -1,7 +1,8 @@
 // Run: node test.js
 const assert = require('assert')
 const {
-  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  renamedType, planInheritedParams, droppedInheritedParams
 } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
@@ -202,5 +203,43 @@ const arraySpecs = planAccessors([{ name: 'produit', type: 'array<Produit>', mul
 assert.deepStrictEqual(byName(arraySpecs, '__construct').params, [{ name: 'produit', type: 'array<Produit>', multiplicity: '' }])
 assert.deepStrictEqual(byName(arraySpecs, 'getProduit').params[0].type, 'array<Produit>')
 assert.strictEqual(renamedType('array<Produit>', 'Produit', 'Article'), 'array<Article>')
+
+// Edited association: Categorie 1 --<> 0..* Produit, attribute -categorie: ?Categorie already generated
+const generatedAttr = { name: 'categorie', type: '?Categorie' }
+const edit = change => {
+  const assoc = { end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) }
+  const before = heldFields(assoc).map(h => ({ ...h, attr: generatedAttr }))
+  change(assoc)
+  return planAssocUpdate(before, heldFields(assoc))
+}
+// Role renamed -> attribute renamed
+assert.deepStrictEqual(edit(a => { a.end1.name = 'famille' }).updates.map(u => [u.attr, u.next.name, u.next.type]),
+  [[generatedAttr, 'famille', '?Categorie']])
+// Multiplicity 1 -> 0..* -> retyped array<Categorie>
+assert.deepStrictEqual(edit(a => { a.end1.multiplicity = '0..*' }).updates.map(u => u.next.type), ['array<Categorie>'])
+// Diamond moved to Categorie -> removed from Produit, created in Categorie
+let moved = edit(a => { a.end1.aggregation = 'shared'; a.end2.aggregation = 'none' })
+assert.deepStrictEqual(moved.deletes, [{ attr: generatedAttr }])
+assert.deepStrictEqual(moved.creates.map(c => [c.holder, c.field.name, c.field.type]), [[Categorie, 'produit', 'array<Produit>']])
+// Nothing relevant changed -> nothing
+assert.deepStrictEqual(edit(() => {}), { updates: [], deletes: [], creates: [] })
+// Never generated -> left alone
+const fresh2 = { end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) }
+const freshBefore = heldFields(fresh2).map(h => ({ ...h, attr: undefined }))
+fresh2.end1.name = 'famille'
+assert.deepStrictEqual(planAssocUpdate(freshBefore, heldFields(fresh2)), { updates: [], deletes: [], creates: [] })
+// 1--1 where the user deleted one side's attribute: editing a role does not bring it back
+const oneToOne = { end1: end(Personne, '1'), end2: end(Adresse, '1') }
+const partial = heldFields(oneToOne).map(h => ({ ...h, attr: h.holder === Personne ? { name: 'adresse' } : undefined }))
+oneToOne.end2.name = 'domicile'
+const partialPlan = planAssocUpdate(partial, heldFields(oneToOne))
+assert.deepStrictEqual([partialPlan.updates.length, partialPlan.creates.length, partialPlan.deletes.length], [1, 0, 0])
+
+// Inheritance deleted: Employe loses nom, prenom from its constructor, keeps its own salaire
+const empCtor = { name: '__construct', parameters: [P('nom', 'string'), P('prenom', 'string'), P('salaire', 'float')] }
+assert.deepStrictEqual(droppedInheritedParams(empCtor, ['id', 'nom', 'prenom'], [], ['salaire']).map(c => c.remove.name), ['nom', 'prenom'])
+// Declared again in the child: kept
+assert.deepStrictEqual(droppedInheritedParams(empCtor, ['nom'], [], ['nom', 'salaire']), [])
+assert.deepStrictEqual(droppedInheritedParams(undefined, ['nom'], [], []), [])
 
 console.log('ok')

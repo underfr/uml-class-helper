@@ -26,27 +26,59 @@ function holds (own, other) {
 }
 
 /**
- * Association ends that are properties of `cls`, as attribute-like objects typed `array<Class>` when
- * the held end is many (0..*, 1..*), `?Class` otherwise (1, 0..1).
+ * Attributes an association gives its classes: [{ holder, from: 'end1'|'end2', field }], `field` being
+ * attribute-like and typed `array<Class>` when the held end is many (0..*, 1..*), `?Class` otherwise (1, 0..1).
  * Arrows first, then the diamond, then multiplicities decide; otherwise both sides.
  * An unnamed role defaults to the class name (Adresse -> adresse).
  */
-function associationFields (cls, associations) {
-  const fields = []
-  for (const assoc of associations) {
-    for (const [own, other] of [[assoc.end1, assoc.end2], [assoc.end2, assoc.end1]]) {
-      if (own.reference !== cls || !holds(own, other)) continue
-      fields.push({
+function heldFields (assoc) {
+  const held = []
+  for (const [own, other, from] of [[assoc.end1, assoc.end2, 'end2'], [assoc.end2, assoc.end1, 'end1']]) {
+    if (!holds(own, other)) continue
+    held.push({
+      holder: own.reference,
+      from,
+      field: {
         name: other.name || lcfirst(typeName(other.reference)),
         // Plain string (needed for `?`/`array<>`); renamedType keeps it in line when the class is renamed
         type: isMany(other) ? `array<${typeName(other.reference)}>` : '?' + typeName(other.reference),
         multiplicity: '',
         isReadOnly: other.isReadOnly,
         isStatic: false
-      })
+      }
+    })
+  }
+  return held
+}
+
+// Association ends that are properties of `cls`, as attribute-like objects
+function associationFields (cls, associations) {
+  return associations.flatMap(heldFields).filter(h => h.holder === cls).map(h => h.field)
+}
+
+/**
+ * How the attributes generated from one association change after it was edited (role, multiplicity,
+ * arrow, diamond, class at an end, class renamed). `before` is heldFields from before the edit, each with
+ * the generated `attr` found then (or none); `after` is heldFields now.
+ * Only an association already generated (one `attr` found) is touched.
+ * @return {{updates: Array<{attr, next}>, deletes: Array<{attr}>, creates: Array<{holder, field}>}}
+ */
+function planAssocUpdate (before, after) {
+  const plan = { updates: [], deletes: [], creates: [] }
+  if (!before.some(b => b.attr)) return plan
+  for (const b of before.filter(x => x.attr)) {
+    const a = after.find(x => x.from === b.from && x.holder === b.holder)
+    if (!a) {
+      plan.deletes.push({ attr: b.attr })
+    } else if (a.field.name !== b.field.name || a.field.type !== b.field.type) {
+      plan.updates.push({ attr: b.attr, next: a.field })
     }
   }
-  return fields
+  // New holder (moved arrow/diamond, changed multiplicity or end class); one the user emptied stays empty
+  for (const a of after) {
+    if (!before.some(b => b.from === a.from && b.holder === a.holder)) plan.creates.push({ holder: a.holder, field: a.field })
+  }
+  return plan
 }
 
 // Association fields not yet declared as attributes, deduped by name
@@ -188,6 +220,12 @@ function planInheritedParams (inherited, ops, ctorNames) {
   return [...inherited].reverse().flatMap(attr => planSync(attr, attr, ctorOps, ctorNames))
 }
 
+// Constructor param removals for attributes no longer inherited, unless the class declares them itself
+function droppedInheritedParams (ctor, beforeNames, afterNames, ownNames) {
+  const gone = new Set(beforeNames.filter(n => !afterNames.includes(n) && !ownNames.includes(n)).map(baseName))
+  return ctor ? ctor.parameters.filter(p => gone.has(p.name)).map(p => ({ remove: p, from: ctor })) : []
+}
+
 // Text type after renaming class `oldName` to `newName` (`?Categorie` -> `?Famille`), or null if unaffected
 function renamedType (t, oldName, newName) {
   if (t === oldName) return newName
@@ -197,5 +235,6 @@ function renamedType (t, oldName, newName) {
 }
 
 module.exports = {
-  planAccessors, associationFields, missingAttributes, planSync, deletedWith, renamedType, planInheritedParams
+  planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
+  renamedType, planInheritedParams, droppedInheritedParams
 }
