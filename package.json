@@ -2,7 +2,7 @@
   "name": "staruml.uml-helpers",
   "title": "UML Helpers",
   "description": "Generate getters and setters from class attributes.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "keywords": ["uml", "class", "getter", "setter"],
   "author": { "name": "Loick Laurent" },
   "license": "MIT",

@@ -2,7 +2,8 @@
 const assert = require('assert')
 const {
   planAccessors, associationFields, heldFields, planAssocUpdate, missingAttributes, planSync, deletedWith,
-  renamedType, planInheritedParams, droppedInheritedParams
+  renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
+  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation
 } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
@@ -81,7 +82,7 @@ const assocs = [
   { end1: end(Personne), end2: end(Adresse, '', { navigable: 'notNavigable', name: 'ancienne' }) }
 ]
 const fields = associationFields(Personne, assocs)
-assert.deepStrictEqual(fields.map(f => f.name), ['domicile', 'commande'])
+assert.deepStrictEqual(fields.map(f => f.name), ['domicile', 'commandes'])
 assert.strictEqual(fields[0].type, '?Adresse')
 assert.deepStrictEqual(associationFields(Adresse, assocs.slice(0, 1)), [])
 // Only the crossed side is blocked
@@ -99,17 +100,17 @@ assert.deepStrictEqual(fieldNames(Personne, [
 
 // ?Adresse stays out of the constructor, array<Commande> goes in; getDomicile(): ?Adresse, setDomicile(domicile: ?Adresse): void
 const assocSpecs = planAccessors(fields, [], { ctor: true })
-assert.deepStrictEqual(byName(assocSpecs, '__construct').params.map(p => p.name), ['commande'])
+assert.deepStrictEqual(byName(assocSpecs, '__construct').params.map(p => p.name), ['commandes'])
 assert.deepStrictEqual(byName(assocSpecs, 'getDomicile').params, [
   { name: '', type: '?Adresse', multiplicity: '', direction: 'return' }
 ])
 assert.deepStrictEqual(byName(assocSpecs, 'setDomicile').params[0], { name: 'domicile', type: '?Adresse', multiplicity: '' })
 // No [0..*] copied from the association end
-assert.strictEqual(byName(assocSpecs, 'getCommande').params[0].multiplicity, '')
+assert.strictEqual(byName(assocSpecs, 'getCommandes').params[0].multiplicity, '')
 
 // -domicile: ?Adresse is created unless an attribute already has that name; duplicate roles collapse
-assert.deepStrictEqual(missingAttributes([{ name: 'domicile' }], fields).map(f => f.name), ['commande'])
-assert.deepStrictEqual(missingAttributes([], [...fields, fields[1]]).map(f => f.name), ['domicile', 'commande'])
+assert.deepStrictEqual(missingAttributes([{ name: 'domicile' }], fields).map(f => f.name), ['commandes'])
+assert.deepStrictEqual(missingAttributes([], [...fields, fields[1]]).map(f => f.name), ['domicile', 'commandes'])
 
 // Sync after a type change
 const P = (name, t, direction = 'in') => ({ name, type: t, multiplicity: '', direction })
@@ -194,7 +195,7 @@ assert.deepStrictEqual(planInheritedParams(personne, [{ name: '__construct', par
 // Held end many -> array<T>, single -> ?T; many-to-many goes to the diamond side only
 const Fournisseur = { name: 'Fournisseur' }
 const manyToMany = [{ end1: end(Produit, '0..*'), end2: end(Fournisseur, '0..*', shared) }]
-assert.deepStrictEqual(associationFields(Fournisseur, manyToMany).map(f => [f.name, f.type]), [['produit', 'array<Produit>']])
+assert.deepStrictEqual(associationFields(Fournisseur, manyToMany).map(f => [f.name, f.type]), [['produits', 'array<Produit>']])
 assert.deepStrictEqual(associationFields(Produit, manyToMany), [])
 assert.strictEqual(associationFields(Produit, diagram)[0].type, '?Categorie') // 0..* -- 1
 assert.strictEqual(associationFields(Produit, [{ end1: end(Categorie, '0..1'), end2: end(Produit, '0..*', shared) }])[0].type, '?Categorie')
@@ -220,7 +221,7 @@ assert.deepStrictEqual(edit(a => { a.end1.multiplicity = '0..*' }).updates.map(u
 // Diamond moved to Categorie -> removed from Produit, created in Categorie
 let moved = edit(a => { a.end1.aggregation = 'shared'; a.end2.aggregation = 'none' })
 assert.deepStrictEqual(moved.deletes, [{ attr: generatedAttr }])
-assert.deepStrictEqual(moved.creates.map(c => [c.holder, c.field.name, c.field.type]), [[Categorie, 'produit', 'array<Produit>']])
+assert.deepStrictEqual(moved.creates.map(c => [c.holder, c.field.name, c.field.type]), [[Categorie, 'produits', 'array<Produit>']])
 // Nothing relevant changed -> nothing
 assert.deepStrictEqual(edit(() => {}), { updates: [], deletes: [], creates: [] })
 // Never generated -> left alone
@@ -241,5 +242,90 @@ assert.deepStrictEqual(droppedInheritedParams(empCtor, ['id', 'nom', 'prenom'], 
 // Declared again in the child: kept
 assert.deepStrictEqual(droppedInheritedParams(empCtor, ['nom'], [], ['nom', 'salaire']), [])
 assert.deepStrictEqual(droppedInheritedParams(undefined, ['nom'], [], []), [])
+
+// Plural / singular
+assert.deepStrictEqual(['produit', 'journal', 'bureau', 'jeu', 'prix'].map(plural), ['produits', 'journaux', 'bureaux', 'jeux', 'prix'])
+assert.deepStrictEqual(['produits', 'journaux', 'bureaux', 'jeux', 'prix'].map(singular), ['produit', 'journal', 'bureau', 'jeu', 'prix'])
+assert.strictEqual(heldFields({ end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) })[0].field.name, 'categorie')
+assert.strictEqual(heldFields({ end1: end(Categorie, '0..*'), end2: end(Produit, '0..*', shared) })[0].field.name, 'categories')
+
+// add/remove generated for array<T>
+const arr = { name: 'produits', type: 'array<Produit>', multiplicity: '' }
+const arrSpecs = planAccessors([arr], [])
+assert.deepStrictEqual(names(arrSpecs), ['getProduits', 'setProduits', 'addProduit', 'removeProduit'])
+assert.deepStrictEqual(byName(arrSpecs, 'addProduit').params, [
+  { name: 'produit', type: 'Produit', multiplicity: '' }, { name: '', type: 'void', direction: 'return' }
+])
+assert.deepStrictEqual(deletedWith(arr, [{ name: 'addProduit' }, { name: 'removeProduit' }, { name: 'other' }]).map(o => o.name), ['addProduit', 'removeProduit'])
+// Not for a plain attribute that happens to share the name
+assert.deepStrictEqual(deletedWith({ name: 'produit', type: '?Produit' }, [{ name: 'addProduit' }]), [])
+
+// Sync: ?T -> array<T> creates add/remove; array<T> -> ?T removes them; rename follows
+const setterOp = { name: 'setCategorie', parameters: [P('categorie', '?Categorie'), P('', 'void', 'return')], _parent: 'cls' }
+const one = { name: 'categorie', type: '?Categorie', multiplicity: '' }
+let synced = planSync(one, { ...one, name: 'categories', type: 'array<Categorie>' }, [setterOp], ['categorie'])
+assert.deepStrictEqual(synced.filter(c => c.createOp).map(c => [c.createOp.name, c.createOp.params[0].type, c.in]),
+  [['addCategorie', 'Categorie', 'cls'], ['removeCategorie', 'Categorie', 'cls']])
+const adder = { name: 'addCategorie', parameters: [P('categorie', 'Categorie'), P('', 'void', 'return')] }
+const many = { name: 'categories', type: 'array<Categorie>', multiplicity: '' }
+synced = planSync(many, { ...many, name: 'categorie', type: '?Categorie' }, [adder], ['categories'])
+assert.deepStrictEqual(synced, [{ removeOp: adder }])
+synced = planSync(many, { ...many, name: 'familles', type: 'array<Famille>' }, [adder], ['categories'])
+assert.deepStrictEqual(synced.map(c => [c.field, c.value]), [['name', 'addFamille'], ['type', 'Famille'], ['name', 'famille']])
+
+// get <-> is follows bool
+const getActif = { name: 'getActif', parameters: [P('', 'string', 'return')] }
+synced = planSync({ name: 'actif', type: 'string', multiplicity: '' }, { name: 'actif', type: 'bool', multiplicity: '' }, [getActif], ['actif'])
+assert.deepStrictEqual(synced.map(c => [c.field, c.value]), [['name', 'isActif'], ['type', 'bool']])
+// Static follows
+synced = planSync({ name: 'actif', type: 'string', multiplicity: '' }, { name: 'actif', type: 'string', multiplicity: '', isStatic: true }, [getActif], ['actif'])
+assert.deepStrictEqual(synced, [{ assign: getActif, field: 'isStatic', value: true }])
+// Rename onto a taken method name: refused with a warning
+const clash = [{ name: 'getNom', parameters: [P('', 'string', 'return')] }, { name: 'getPrenom', parameters: [] }]
+synced = planSync({ name: 'nom', type: 'string', multiplicity: '' }, { name: 'prenom', type: 'string', multiplicity: '' }, clash, ['nom'])
+assert.deepStrictEqual(synced, [{ warn: 'getPrenom' }])
+
+// Interfaces and abstract methods
+const afficher = { name: 'afficher', isStatic: false, parameters: [P('format', 'string'), P('', 'string', 'return')] }
+const iface = { operations: [afficher] }
+const calculer = { name: 'calculer', isAbstract: true, parameters: [] }
+const base = { operations: [calculer, { name: 'nommer', isAbstract: false, parameters: [] }] }
+const concrete = { isAbstract: false, operations: [] }
+assert.deepStrictEqual(requiredOps(concrete, [base], [iface]), [afficher, calculer])
+assert.deepStrictEqual(requiredOps({ isAbstract: false, operations: [{ name: 'afficher', parameters: [] }] }, [base], [iface]), [calculer])
+assert.deepStrictEqual(requiredOps({ isAbstract: true, operations: [] }, [base], [iface]), [])
+// Implemented higher up: not required again
+assert.deepStrictEqual(requiredOps(concrete, [{ operations: [{ name: 'calculer', isAbstract: false, parameters: [] }] }, base], []), [])
+assert.deepStrictEqual(opSpec(afficher).params, [
+  { name: 'format', type: 'string', multiplicity: '', direction: 'in' }, { name: '', type: 'string', multiplicity: '', direction: 'return' }
+])
+const copy = { name: 'afficher', isStatic: false, parameters: [P('format', 'string'), P('', 'string', 'return')] }
+assert.deepStrictEqual(syncImplementation(afficher, copy), [])
+assert.deepStrictEqual(syncImplementation({ ...afficher, name: 'imprimer', parameters: [P('', 'void', 'return')] }, copy), [
+  { assign: copy, field: 'name', value: 'imprimer' },
+  { replaceParams: copy, params: [{ name: '', type: 'void', multiplicity: '', direction: 'return' }] }
+])
+
+// Check diagram
+const lintCls = {
+  name: 'produit',
+  attributes: [{ name: 'Nom', type: 'string' }, { name: 'prix', type: '' }],
+  operations: [{ name: 'getPrix' }, { name: 'getStock' }, { name: 'addLigne' }, { name: 'afficher' }, { name: '__construct' }]
+}
+const lintMessages = lintClass(lintCls, [], ['afficher'], [{ name: 'calculer', _parent: { name: 'Base' } }]).map(p => p.message)
+assert.deepStrictEqual(lintMessages, [
+  'produit : nom de classe en PascalCase attendu',
+  'produit : attribut « Nom » : camelCase attendu',
+  'produit : attribut « prix » sans type',
+  'produit : « getStock » sans attribut « stock »',
+  'produit : « addLigne » sans attribut array<…> correspondant',
+  'produit : méthode « calculer » de « Base » non implémentée'
+])
+assert.deepStrictEqual(lintClass({ name: 'Ok', attributes: [{ name: 'lignes', type: 'array<Ligne>' }], operations: [{ name: 'addLigne' }, { name: 'getLignes' }] }, [], [], []), [])
+assert.deepStrictEqual(lintAssociation({ end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) }), [])
+assert.deepStrictEqual(lintAssociation({ end1: end(Personne, '1'), end2: end(Adresse) }).map(p => p.message), [
+  'Association Personne — Adresse : multiplicité manquante côté Adresse',
+  "Association Personne — Adresse : attribut généré des deux côtés (ajoute une flèche ou un losange si un seul côté doit l'avoir)"
+])
 
 console.log('ok')

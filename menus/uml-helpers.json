@@ -12,7 +12,10 @@
             { "label": "Generate Getters", "id": "tools.uml-helpers.getters", "command": "uml-helpers:getters" },
             { "label": "Generate Setters", "id": "tools.uml-helpers.setters", "command": "uml-helpers:setters" },
             { "type": "separator" },
-            { "label": "Generate for Whole Diagram", "id": "tools.uml-helpers.diagram", "command": "uml-helpers:diagram" }
+            { "label": "Generate for Whole Diagram", "id": "tools.uml-helpers.diagram", "command": "uml-helpers:diagram" },
+            { "label": "Check Diagram", "id": "tools.uml-helpers.check", "command": "uml-helpers:check" },
+            { "type": "separator" },
+            { "label": "Run Self-Test", "id": "tools.uml-helpers.self-test", "command": "uml-helpers:self-test" }
           ]
         }
       ]
@@ -29,7 +32,8 @@
           { "label": "Generate Getters", "id": "uml-helpers.getters", "command": "uml-helpers:getters" },
           { "label": "Generate Setters", "id": "uml-helpers.setters", "command": "uml-helpers:setters" },
           { "type": "separator" },
-          { "label": "Generate for Whole Diagram", "id": "uml-helpers.diagram", "command": "uml-helpers:diagram" }
+          { "label": "Generate for Whole Diagram", "id": "uml-helpers.diagram", "command": "uml-helpers:diagram" },
+          { "label": "Check Diagram", "id": "uml-helpers.check", "command": "uml-helpers:check" }
         ]
       }
     ],
