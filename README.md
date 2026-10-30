@@ -1,7 +1,6 @@
 # UML Class Helper (StarUML)
 
 Generates the constructor, getters and setters of a class in StarUML (≥ 6), PHP style, and keeps them in sync as the model changes.
-The extension's messages (dialogs, Check Diagram, Self-Test) are in French.
 
 ## Installation
 

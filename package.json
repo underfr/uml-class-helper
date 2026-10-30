@@ -2,7 +2,7 @@
   "name": "underfr.uml-class-helper",
   "title": "UML Class Helper",
   "description": "PHP-style class diagrams: generates and keeps in sync constructors, getters, setters, add/remove, association attributes and interface methods.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "keywords": ["uml", "class", "php", "getter", "setter", "constructor"],
   "homepage": "https://github.com/underfr/uml-class-helper",
   "issues": "https://github.com/underfr/uml-class-helper/issues",

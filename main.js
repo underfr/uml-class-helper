@@ -205,7 +205,7 @@ function applyChanges (builder, changes) {
 function generate (options, models = app.selections.getSelectedModels()) {
   const targets = targetsOf(models)
   if (targets.size === 0) {
-    app.toast.warning('Sélectionnez une classe ou des attributs.')
+    app.toast.warning('Select a class or attributes.')
     return
   }
   let count = 0
@@ -223,7 +223,7 @@ function generate (options, models = app.selections.getSelectedModels()) {
   joinUndoStep(generated, () => runOperation('reorder methods', builder => {
     for (const cls of targets.keys()) reorderOps(builder, cls)
   }))
-  app.toast.info(count > 0 ? `${count} élément(s) généré(s).` : 'Rien à générer (déjà présents).')
+  app.toast.info(count > 0 ? `${count} element(s) generated.` : 'Nothing to generate (already there).')
 }
 
 // Puts the methods of `cls` in reading order (orderedOps), moving as few as possible
@@ -248,11 +248,11 @@ async function nameClashingRoles (classes) {
       const view = app.repository.getViewsOf(h.assoc).find(v => v._parent instanceof type.Diagram)
       if (view) app.diagrams.selectInDiagram(view)
       const { buttonId, returnValue } = await app.dialogs.showInputDialog(
-        `${cls.name} a plusieurs associations vers ${end.reference.name} : nom de l'attribut pour l'association sélectionnée ?`, h.field.name)
+        `${cls.name} has several associations to ${end.reference.name}: attribute name for the selected association?`, h.field.name)
       const name = (returnValue || '').trim()
       if (buttonId !== 'ok' || !name) continue
       if (chosen.has(name)) {
-        app.toast.warning(`« ${name} » déjà choisi dans ${cls.name} : association non renommée.`)
+        app.toast.warning(`"${name}" already chosen in ${cls.name}: association not renamed.`)
         continue
       }
       chosen.add(name)
@@ -278,7 +278,7 @@ function generateDiagram () {
   const diagram = app.diagrams.getCurrentDiagram()
   const classes = diagram ? diagramClasses(diagram) : []
   if (classes.length === 0) {
-    app.toast.warning('Aucune classe dans le diagramme courant.')
+    app.toast.warning('No class in the current diagram.')
     return
   }
   return generateNaming(ALL, classes)
@@ -466,7 +466,7 @@ function onBeforeOperation (operation) {
       if (isClassAttribute(elem) && ['name', 'type', 'multiplicity', 'isStatic'].includes(op.arg.f)) {
         // Two attributes with one name would share their getters/setters: keep the old name
         if (op.arg.f === 'name' && op.arg.n !== op.arg.o && elem._parent.attributes.some(a => a !== elem && a.name === op.arg.n)) {
-          app.toast.warning(`« ${op.arg.n} » existe déjà dans ${elem._parent.name} : renommage annulé.`)
+          app.toast.warning(`"${op.arg.n}" already exists in ${elem._parent.name}: renaming cancelled.`)
           op.arg.n = op.arg.o
           continue
         }
@@ -491,7 +491,7 @@ function onBeforeOperation (operation) {
       }
     }
     if (warnings.length > 0) {
-      app.toast.warning(`Déjà pris, non renommé : ${[...new Set(warnings)].join(', ')}`)
+      app.toast.warning(`Already taken, not renamed: ${[...new Set(warnings)].join(', ')}`)
     }
     // `?Categorie` is plain text: rename it everywhere along with the class
     if (renamedClasses.length > 0) {
@@ -602,7 +602,7 @@ function onOperationExecuted (operation) {
 function checkDiagram () {
   const diagram = app.diagrams.getCurrentDiagram()
   if (!diagram) {
-    app.toast.warning('Aucun diagramme ouvert.')
+    app.toast.warning('No diagram open.')
     return
   }
   const problems = []
@@ -615,17 +615,17 @@ function checkDiagram () {
     problems.push(...lintAssociation(assoc))
   }
   if (problems.length === 0) {
-    app.toast.info('Aucun problème trouvé.')
+    app.toast.info('No problem found.')
     return
   }
   app.modelExplorer.select(problems[0].elem, true)
-  app.dialogs.showTextDialog(`${problems.length} problème(s) :`, problems.map(p => '• ' + p.message).join('\n'))
+  app.dialogs.showTextDialog(`${problems.length} problem(s):`, problems.map(p => '• ' + p.message).join('\n'))
 }
 
 // Runs every automatic behavior on a temporary model of the open project, then deletes it
 async function selfTest () {
-  if (app.dialogs.showConfirmDialog('Le test crée puis supprime un modèle temporaire dans le projet ouvert ' +
-    '(idéalement un projet vide). Continuer ?') !== 'ok') return
+  if (app.dialogs.showConfirmDialog('The test creates then deletes a temporary model in the open project ' +
+    '(ideally an empty project). Continue?') !== 'ok') return
   const results = []
   const check = (label, ok) => results.push(`${ok ? '✓' : '✗'} ${label}`)
   const has = (cls, name) => cls.operations.some(o => o.name === name)
@@ -653,32 +653,32 @@ async function selfTest () {
 
     const pView = node('UMLClass', 20, 'Produit')
     const P = pView.model
-    check('Nouvelle classe : -id: ?int, getId(), setId()', attr(P, 'id') && attr(P, 'id').type === '?int' && has(P, 'getId') && has(P, 'setId'))
+    check('New class: -id: ?int, getId(), setId()', attr(P, 'id') && attr(P, 'id').type === '?int' && has(P, 'getId') && has(P, 'setId'))
     const nom = newAttr(P, 'nom', 'string')
-    check('Nouvel attribut : getNom(), setNom()', has(P, 'getNom') && has(P, 'setNom') && !has(P, 'getAttribute1'))
+    check('New attribute: getNom(), setNom()', has(P, 'getNom') && has(P, 'setNom') && !has(P, 'getAttribute1'))
     generate(ALL, [P])
-    check('__construct(nom), sans id', ctorParams(P) === '["nom"]')
+    check('__construct(nom), without id', ctorParams(P) === '["nom"]')
     app.engine.setProperty(nom, 'type', '?string')
-    check('?string : sort du constructeur', ctorParams(P) === '[]')
+    check('?string: leaves the constructor', ctorParams(P) === '[]')
     app.engine.setProperty(nom, 'type', 'string')
-    check('string : revient dans le constructeur', ctorParams(P) === '["nom"]')
+    check('string: back in the constructor', ctorParams(P) === '["nom"]')
     app.engine.setProperty(nom, 'name', 'libelle')
-    check('Renommage : getLibelle(), setLibelle(), param libelle', has(P, 'getLibelle') && has(P, 'setLibelle') && !has(P, 'getNom') && ctorParams(P) === '["libelle"]')
+    check('Renamed: getLibelle(), setLibelle(), param libelle', has(P, 'getLibelle') && has(P, 'setLibelle') && !has(P, 'getNom') && ctorParams(P) === '["libelle"]')
     const actif = newAttr(P, 'actif', 'string')
     app.engine.setProperty(actif, 'type', 'bool')
-    check('Type bool : getActif() devient isActif()', has(P, 'isActif') && !has(P, 'getActif'))
+    check('Type bool: getActif() becomes isActif()', has(P, 'isActif') && !has(P, 'getActif'))
     app.engine.setProperty(actif, 'isStatic', true)
-    check('Statique : isActif() devient statique, hors constructeur', P.operations.find(o => o.name === 'isActif').isStatic === true && ctorParams(P) === '["libelle"]')
+    check('Static: isActif() becomes static, out of the constructor', P.operations.find(o => o.name === 'isActif').isStatic === true && ctorParams(P) === '["libelle"]')
     const prix = newAttr(P, 'prix', 'float')
     app.engine.setProperty(prix, 'name', 'libelle')
-    check('Nom déjà pris : renommage annulé', prix.name === 'prix' && P.operations.filter(o => o.name === 'getLibelle').length === 1)
+    check('Name already taken: renaming cancelled', prix.name === 'prix' && P.operations.filter(o => o.name === 'getLibelle').length === 1)
     app.engine.deleteElements([prix], [])
-    check('Suppression : getPrix(), setPrix() et param supprimés', !has(P, 'getPrix') && !has(P, 'setPrix') && ctorParams(P) === '["libelle"]')
+    check('Deleted: getPrix(), setPrix() and param deleted', !has(P, 'getPrix') && !has(P, 'setPrix') && ctorParams(P) === '["libelle"]')
     const dispo = newAttr(P, 'dispo', 'Boolean')
-    check('Type « Boolean » enregistré « bool » : isDispo()', dispo.type === 'bool' && has(P, 'isDispo'))
+    check('Type "Boolean" stored as "bool": isDispo()', dispo.type === 'bool' && has(P, 'isDispo'))
     app.engine.deleteElements([dispo], [])
     app.repository.undo()
-    check('Un seul Ctrl+Z annule la suppression : attribut, isDispo() et param revenus',
+    check('One Ctrl+Z undoes the deletion: attribute, isDispo() and param back',
       attr(P, 'dispo') && has(P, 'isDispo') && ctorParams(P) === '["libelle","dispo"]')
     app.engine.deleteElements([attr(P, 'dispo')], [])
 
@@ -689,20 +689,20 @@ async function selfTest () {
     app.engine.setProperty(assoc.end2, 'multiplicity', '0..*')
     app.engine.setProperty(assoc.end2, 'aggregation', 'shared')
     generate(ALL, [P, C])
-    check('Agrégation : -categorie: ?Categorie côté losange seulement', attr(P, 'categorie') && attr(P, 'categorie').type === '?Categorie' && has(P, 'getCategorie') && C.attributes.length === 1)
-    check('Méthodes rangées : __construct, accesseurs par attribut, __toString()', P.operations.map(o => o.name).join(', ') ===
+    check('Aggregation: -categorie: ?Categorie on the diamond side only', attr(P, 'categorie') && attr(P, 'categorie').type === '?Categorie' && has(P, 'getCategorie') && C.attributes.length === 1)
+    check('Methods ordered: __construct, accessors per attribute, __toString()', P.operations.map(o => o.name).join(', ') ===
       '__construct, getId, setId, getLibelle, setLibelle, isActif, setActif, getCategorie, setCategorie, __toString')
     app.engine.setProperty(assoc.end2, 'aggregation', 'composite')
-    check('Composition : -categorie: Categorie sans ?, dans le constructeur', attr(P, 'categorie') && attr(P, 'categorie').type === 'Categorie' && ctorParams(P) === '["libelle","categorie"]')
+    check('Composition: -categorie: Categorie without ?, in the constructor', attr(P, 'categorie') && attr(P, 'categorie').type === 'Categorie' && ctorParams(P) === '["libelle","categorie"]')
     app.engine.setProperty(assoc.end2, 'aggregation', 'shared')
     app.engine.setProperty(assoc.end1, 'multiplicity', '0..*')
     check('0..* : -categories: array<Categorie>, addCategorie(), removeCategorie()', attr(P, 'categories') && attr(P, 'categories').type === 'array<Categorie>' && has(P, 'addCategorie') && has(P, 'removeCategorie') && !attr(P, 'categorie'))
     app.engine.setProperty(C, 'name', 'Famille')
-    check('Classe renommée : -familles: array<Famille>, addFamille()', attr(P, 'familles') && attr(P, 'familles').type === 'array<Famille>' && has(P, 'addFamille'))
+    check('Class renamed: -familles: array<Famille>, addFamille()', attr(P, 'familles') && attr(P, 'familles').type === 'array<Famille>' && has(P, 'addFamille'))
     app.engine.setProperty(assoc.end1, 'multiplicity', '1')
-    check('Retour à 1 : -famille: ?Famille, plus de addFamille()', attr(P, 'famille') && attr(P, 'famille').type === '?Famille' && !has(P, 'addFamille'))
+    check('Back to 1: -famille: ?Famille, no more addFamille()', attr(P, 'famille') && attr(P, 'famille').type === '?Famille' && !has(P, 'addFamille'))
     app.engine.deleteElements([assoc], [])
-    check('Association supprimée : attribut et méthodes supprimés', !attr(P, 'famille') && !has(P, 'getFamille'))
+    check('Association deleted: attribute and methods deleted', !attr(P, 'famille') && !has(P, 'getFamille'))
 
     // Two compositions Chocoblast ◆── User: one -user until the roles are named
     const uView = node('UMLClass', 980, 'User')
@@ -716,7 +716,7 @@ async function selfTest () {
     }
     const [b1, b2] = [blast(), blast()]
     generate(ALL, [K])
-    check('2 compositions vers User : un seul -user, 2 rôles à nommer, signalé par Check Diagram', attr(K, 'user') && K.attributes.length === 2 &&
+    check('2 compositions to User: a single -user, 2 roles to name, reported by Check Diagram', attr(K, 'user') && K.attributes.length === 2 &&
       roleClashes(K, [b1, b2]).length === 2 && lintRoleClashes(K, associationsOf(K)).length === 1)
     // The naming dialog, answered by the test
     const showInputDialog = app.dialogs.showInputDialog
@@ -729,13 +729,13 @@ async function selfTest () {
     }
     const named = () => attr(K, 'target') && attr(K, 'blasted') && attr(K, 'blasted').type === 'User' && !attr(K, 'user') &&
       has(K, 'getBlasted') && ctorParams(K) === '["target","blasted"]'
-    check('Noms demandés : -target: User, -blasted: User, __construct(target, blasted)', named())
+    check('Names asked: -target: User, -blasted: User, __construct(target, blasted)', named())
     app.repository.undo()
-    check('Un seul Ctrl+Z annule noms et génération : -user revenu', attr(K, 'user') && !attr(K, 'target') && !attr(K, 'blasted') && !b1.end1.name)
+    check('One Ctrl+Z undoes names and generation: -user back', attr(K, 'user') && !attr(K, 'target') && !attr(K, 'blasted') && !b1.end1.name)
     app.repository.redo()
-    check('Rétablir : -target et -blasted revenus', named())
+    check('Redo: -target and -blasted back', named())
     app.engine.deleteElements([b2], [])
-    check('2e composition supprimée : -blasted supprimé, -target reste', !attr(K, 'blasted') && attr(K, 'target'))
+    check('2nd composition deleted: -blasted deleted, -target stays', !attr(K, 'blasted') && attr(K, 'target'))
 
     // Parent and child generated together (Generate for Whole Diagram), both getting an attribute
     const aView = node('UMLClass', 1700, 'Animal')
@@ -751,75 +751,75 @@ async function selfTest () {
       app.engine.setProperty(a.end2, 'aggregation', 'composite')
     }
     generate(ALL, [A, D])
-    check('Parent et fille générés ensemble : Chien::__construct(nom, famille, race, user)',
+    check('Parent and child generated together: Chien::__construct(nom, famille, race, user)',
       ctorParams(D) === '["nom","famille","race","user"]' && ctorParams(A) === '["nom","famille"]')
 
     const eView = node('UMLClass', 500, 'Employe')
     const E = eView.model
     newAttr(E, 'salaire', 'float')
     const gen = edge('UMLGeneralization', eView, pView).model
-    check('Héritage : -id retiré de l\'enfant', !attr(E, 'id') && !has(E, 'getId'))
+    check('Inheritance: -id removed from the child', !attr(E, 'id') && !has(E, 'getId'))
     generate(ALL, [E])
-    check('Enfant : __construct(libelle, salaire)', ctorParams(E) === '["libelle","salaire"]')
+    check('Child: __construct(libelle, salaire)', ctorParams(E) === '["libelle","salaire"]')
     newAttr(P, 'ville', 'string')
-    check('Attribut ajouté au parent : param ville dans l\'enfant', ctorParams(E) === '["libelle","ville","salaire"]')
+    check('Attribute added to the parent: param ville in the child', ctorParams(E) === '["libelle","ville","salaire"]')
     const compo = edge('UMLAssociation', cView, pView).model
     app.engine.setProperty(compo.end1, 'multiplicity', '1')
     app.engine.setProperty(compo.end2, 'aggregation', 'composite')
     generate(ALL, [P])
-    check('Composition générée dans le parent : param famille dans l\'enfant', ctorParams(E) === '["libelle","ville","famille","salaire"]')
+    check('Composition generated in the parent: param famille in the child', ctorParams(E) === '["libelle","ville","famille","salaire"]')
     app.engine.deleteElements([compo], [])
-    check('Composition supprimée : param famille retiré de l\'enfant', ctorParams(E) === '["libelle","ville","salaire"]')
+    check('Composition deleted: param famille removed from the child', ctorParams(E) === '["libelle","ville","salaire"]')
     const abs = app.factory.createModel({ id: 'UMLOperation', parent: P, field: 'operations' })
     app.engine.setProperties(abs, { name: 'calculer', isAbstract: true })
-    check('Méthode abstraite : calculer() copiée dans l\'enfant', has(E, 'calculer'))
+    check('Abstract method: calculer() copied into the child', has(E, 'calculer'))
     app.engine.setProperty(gen, 'target', C)
-    check('Héritage rebranché sur Famille : params de Produit et calculer() retirés',
+    check('Inheritance reconnected to Famille: Produit params and calculer() removed',
       ctorParams(E) === '["salaire"]' && !has(E, 'calculer') && !attr(E, 'id'))
     app.engine.setProperty(gen, 'target', P)
-    check('Héritage rebranché sur Produit : params et calculer() revenus', ctorParams(E) === '["libelle","ville","salaire"]' && has(E, 'calculer'))
+    check('Inheritance reconnected to Produit: params and calculer() back', ctorParams(E) === '["libelle","ville","salaire"]' && has(E, 'calculer'))
     app.engine.deleteElements([gen], [])
-    check('Héritage supprimé : params hérités retirés, id remis', ctorParams(E) === '["salaire"]' && attr(E, 'id') && has(E, 'getId'))
+    check('Inheritance deleted: inherited params removed, id back', ctorParams(E) === '["salaire"]' && attr(E, 'id') && has(E, 'getId'))
 
     const iView = node('UMLInterface', 740, 'Affichable')
     const opI = app.factory.createModel({ id: 'UMLOperation', parent: iView.model, field: 'operations' })
     app.engine.setProperty(opI, 'name', 'afficher')
     const real = edge('UMLInterfaceRealization', eView, iView).model
-    check('Interface : afficher() copiée', has(E, 'afficher'))
+    check('Interface: afficher() copied', has(E, 'afficher'))
     app.engine.setProperty(opI, 'name', 'imprimer')
-    check('Méthode d\'interface renommée : la copie suit', has(E, 'imprimer') && !has(E, 'afficher'))
+    check('Interface method renamed: the copy follows', has(E, 'imprimer') && !has(E, 'afficher'))
     app.engine.deleteElements([opI], [])
-    check('Méthode d\'interface supprimée : copie supprimée', !has(E, 'imprimer'))
+    check('Interface method deleted: copy deleted', !has(E, 'imprimer'))
     newOp(E, 'decrire')
     const opD = newOp(iView.model, 'decrire')
     app.engine.setProperty(opD, 'name', 'resumer')
-    check('decrire() écrite à la main, même nom qu\'une méthode d\'interface : pas alignée', has(E, 'decrire') && has(E, 'resumer'))
+    check('decrire() written by hand, same name as an interface method: left alone', has(E, 'decrire') && has(E, 'resumer'))
     const xView = node('UMLInterface', 2180, 'Exportable')
     newOp(xView.model, 'exporter')
     const ext = edge('UMLGeneralization', iView, xView).model
-    check('Interface qui en étend une autre : exporter() copiée', has(E, 'exporter'))
+    check('Interface extending another: exporter() copied', has(E, 'exporter'))
     app.engine.deleteElements([ext], [])
-    check('Extension d\'interface supprimée : exporter() retirée', !has(E, 'exporter'))
+    check('Interface extension deleted: exporter() removed', !has(E, 'exporter'))
     app.engine.deleteElements([real], [])
-    check('Flèche « implémente » supprimée : resumer() retirée, decrire() gardée', !has(E, 'resumer') && has(E, 'decrire'))
+    check('"Implements" arrow deleted: resumer() removed, decrire() kept', !has(E, 'resumer') && has(E, 'decrire'))
 
     const bad = newAttr(E, 'Mauvais', '')
     const problems = lintClass(E, inheritedAttrs(E), [], [])
-    check('Vérifier : nom et type manquant signalés', problems.filter(p => p.elem === bad).length === 2)
+    check('Check Diagram: name and missing type reported', problems.filter(p => p.elem === bad).length === 2)
   } catch (err) {
-    check(`Erreur : ${err.message}`, false)
+    check(`Error: ${err.message}`, false)
     console.error(err)
   } finally {
     if (root) app.engine.deleteElements([root], [])
   }
   const failed = results.filter(r => r.startsWith('✗')).length
-  app.dialogs.showTextDialog(failed > 0 ? `${failed} test(s) en échec` : 'Tous les tests passent', results.join('\n'))
+  app.dialogs.showTextDialog(failed > 0 ? `${failed} test(s) failed` : 'All tests pass', results.join('\n'))
 }
 
 // Two copies loaded would make every change twice (duplicate params, methods): the package was named
 // staruml.uml-helpers before 0.9.0, so updating through Install From URL keeps the old one too
-const warnDuplicate = () => app.dialogs.showAlertDialog('UML Class Helper est installé deux fois (ancien nom : « UML Helpers »). ' +
-  'Désinstallez l\'ancienne version dans Tools → Extension Manager → Installed, puis redémarrez StarUML.')
+const warnDuplicate = () => app.dialogs.showAlertDialog('UML Class Helper is installed twice (old name: "UML Helpers"). ' +
+  'Uninstall the old version in Tools → Extension Manager → Installed, then restart StarUML.')
 let duplicate
 function duplicated () {
   if (duplicate === undefined) {

@@ -216,7 +216,7 @@ assert.deepStrictEqual(roleClashes(User, [b1, b2]), [])
 assert.deepStrictEqual(heldFields(b1).map(h => ownsField(b1, h, [b1, b2])), [true])
 assert.deepStrictEqual(heldFields(b2).map(h => ownsField(b2, h, [b1, b2])), [false])
 assert.deepStrictEqual(lintRoleClashes(Chocoblast, [b1, b2]).map(p => [p.elem, p.message]),
-  [[b2, 'Chocoblast : 2 associations donnent l\'attribut « user », un seul est généré (nommer les rôles ou relancer Generate)']])
+  [[b2, 'Chocoblast: 2 associations give the attribute "user", only one is generated (name the roles or run Generate again)']])
 assert.deepStrictEqual(lintRoleClashes(User, [b1, b2]), [])
 // A named role is never asked again; only the unnamed one clashing with it is (Check Diagram still reports it)
 b2.end1.name = 'user'
@@ -348,18 +348,18 @@ const lintCls = {
 }
 const lintMessages = lintClass(lintCls, [], ['afficher'], [{ name: 'calculer', _parent: { name: 'Base' } }]).map(p => p.message)
 assert.deepStrictEqual(lintMessages, [
-  'produit : nom de classe en PascalCase attendu',
-  'produit : attribut « Nom » : camelCase attendu',
-  'produit : attribut « prix » sans type',
-  'produit : « getStock » sans attribut « stock »',
-  'produit : « addLigne » sans attribut array<…> correspondant',
-  'produit : méthode « calculer » de « Base » non implémentée'
+  'produit: class name should be PascalCase',
+  'produit: attribute "Nom" should be camelCase',
+  'produit: attribute "prix" has no type',
+  'produit: "getStock" has no attribute "stock"',
+  'produit: "addLigne" has no matching array<…> attribute',
+  'produit: method "calculer" of "Base" not implemented'
 ])
 assert.deepStrictEqual(lintClass({ name: 'Ok', attributes: [{ name: 'lignes', type: 'array<Ligne>' }], operations: [{ name: 'addLigne', parameters: [] }, { name: 'getLignes', parameters: [] }] }, [], [], []), [])
 assert.deepStrictEqual(lintAssociation({ end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) }), [])
 assert.deepStrictEqual(lintAssociation({ end1: end(Personne, '1'), end2: end(Adresse) }).map(p => p.message), [
-  'Association Personne — Adresse : multiplicité manquante côté Adresse',
-  "Association Personne — Adresse : attribut généré des deux côtés (ajoute une flèche ou un losange si un seul côté doit l'avoir)"
+  'Association Personne — Adresse: missing multiplicity on the Adresse end',
+  'Association Personne — Adresse: attribute generated on both sides (add an arrow or a diamond if only one side should have it)'
 ])
 
 // Irregular plurals, on the last word of a camelCase name; English -y
@@ -388,9 +388,9 @@ const typed = {
   operations: [{ name: 'setNom', parameters: [P('nom', 'String'), P('', 'void', 'return')] }]
 }
 assert.deepStrictEqual(lintClass(typed, [], [], []).map(p => p.message), [
-  'Produit : attribut « actif » : type « Boolean » à écrire « bool »',
-  'Produit : « setNom » : type « String » à écrire « string »',
-  'Produit : « setNom » sans attribut « nom »'
+  'Produit: attribute "actif": type "Boolean" should be "bool"',
+  'Produit: "setNom": type "String" should be "string"',
+  'Produit: "setNom" has no attribute "nom"'
 ])
 
 // __toString, and the reading order: __construct, then per attribute getter, setter, add, remove, then the others
@@ -420,7 +420,7 @@ assert.deepStrictEqual(syncImplementation({ ...source, isStatic: true }, realCop
 // An attribute of another type holds the name an association would give
 const Magasin = { name: 'Magasin', attributes: [{ name: 'categorie', type: 'string' }] }
 assert.deepStrictEqual(lintRoleClashes(Magasin, [{ end1: end(Categorie, '1'), end2: end(Magasin, '0..*', shared) }]).map(p => p.message),
-  ["Magasin : l'attribut « categorie: string » porte le nom que donne l'association vers Categorie (?Categorie), qui n'est donc pas générée (renommer l'un des deux)"])
+  ['Magasin: attribute "categorie: string" has the name the association to Categorie (?Categorie) would give, so it isn\'t generated (rename one of them)'])
 Magasin.attributes[0].type = '?Categorie'
 assert.deepStrictEqual(lintRoleClashes(Magasin, [{ end1: end(Categorie, '1'), end2: end(Magasin, '0..*', shared) }]), [])
 

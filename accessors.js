@@ -117,7 +117,7 @@ function lintRoleClashes (cls, assocs) {
     if (same.length > 1) {
       problems.push({
         elem: same[1].assoc,
-        message: `${cls.name} : ${same.length} associations donnent l'attribut « ${name} », un seul est généré (nommer les rôles ou relancer Generate)`
+        message: `${cls.name}: ${same.length} associations give the attribute "${name}", only one is generated (name the roles or run Generate again)`
       })
     }
     const attr = cls.attributes.find(a => a.name === name)
@@ -125,8 +125,8 @@ function lintRoleClashes (cls, assocs) {
       const { assoc, from, field } = same[0]
       problems.push({
         elem: attr,
-        message: `${cls.name} : l'attribut « ${name}: ${typeName(attr.type)} » porte le nom que donne l'association vers ` +
-          `${typeName(assoc[from].reference)} (${field.type}), qui n'est donc pas générée (renommer l'un des deux)`
+        message: `${cls.name}: attribute "${name}: ${typeName(attr.type)}" has the name the association to ` +
+          `${typeName(assoc[from].reference)} (${field.type}) would give, so it isn't generated (rename one of them)`
       })
     }
     return problems
@@ -408,29 +408,29 @@ function syncImplementation (source, impl, siblings = []) {
 function lintClass (cls, inherited, contractNames, required) {
   const problems = []
   const warn = (elem, message) => problems.push({ elem, message })
-  const where = `${cls.name} :`
-  if (!/^[A-Z][A-Za-z0-9]*$/.test(cls.name)) warn(cls, `${where} nom de classe en PascalCase attendu`)
+  const where = `${cls.name}:`
+  if (!/^[A-Z][A-Za-z0-9]*$/.test(cls.name)) warn(cls, `${where} class name should be PascalCase`)
   const badType = t => typeof t === 'string' && normalType(t) !== t
   for (const a of cls.attributes) {
-    if (!/^_?[a-z][A-Za-z0-9]*$/.test(a.name)) warn(a, `${where} attribut « ${a.name} » : camelCase attendu`)
-    if (!typeName(a.type)) warn(a, `${where} attribut « ${a.name} » sans type`)
-    if (badType(a.type)) warn(a, `${where} attribut « ${a.name} » : type « ${a.type} » à écrire « ${normalType(a.type)} »`)
+    if (!/^_?[a-z][A-Za-z0-9]*$/.test(a.name)) warn(a, `${where} attribute "${a.name}" should be camelCase`)
+    if (!typeName(a.type)) warn(a, `${where} attribute "${a.name}" has no type`)
+    if (badType(a.type)) warn(a, `${where} attribute "${a.name}": type "${a.type}" should be "${normalType(a.type)}"`)
   }
   const all = [...inherited, ...cls.attributes]
   const bases = new Set(all.map(a => baseName(a.name)))
   const items = new Set(all.filter(a => elementType(a.type)).map(a => itemName(baseName(a.name), elementType(a.type))))
   for (const o of cls.operations) {
-    if (!/^(__)?[a-z][A-Za-z0-9]*$/.test(o.name)) warn(o, `${where} méthode « ${o.name} » : camelCase attendu`)
+    if (!/^(__)?[a-z][A-Za-z0-9]*$/.test(o.name)) warn(o, `${where} method "${o.name}" should be camelCase`)
     for (const p of o.parameters.filter(q => badType(q.type))) {
-      warn(o, `${where} « ${o.name} » : type « ${p.type} » à écrire « ${normalType(p.type)} »`)
+      warn(o, `${where} "${o.name}": type "${p.type}" should be "${normalType(p.type)}"`)
     }
     if (contractNames.includes(o.name)) continue
     const acc = /^(get|is|set)([A-Z]\w*)$/.exec(o.name)
-    if (acc && !bases.has(lcfirst(acc[2]))) warn(o, `${where} « ${o.name} » sans attribut « ${lcfirst(acc[2])} »`)
+    if (acc && !bases.has(lcfirst(acc[2]))) warn(o, `${where} "${o.name}" has no attribute "${lcfirst(acc[2])}"`)
     const item = /^(add|remove)([A-Z]\w*)$/.exec(o.name)
-    if (item && !items.has(lcfirst(item[2]))) warn(o, `${where} « ${o.name} » sans attribut array<…> correspondant`)
+    if (item && !items.has(lcfirst(item[2]))) warn(o, `${where} "${o.name}" has no matching array<…> attribute`)
   }
-  for (const op of required) warn(cls, `${where} méthode « ${op.name} » de « ${op._parent ? op._parent.name : '?'} » non implémentée`)
+  for (const op of required) warn(cls, `${where} method "${op.name}" of "${op._parent ? op._parent.name : '?'}" not implemented`)
   return problems
 }
 
@@ -440,11 +440,11 @@ function lintAssociation (assoc) {
   const problems = []
   for (const end of [assoc.end1, assoc.end2]) {
     if (!(end.multiplicity || '').trim()) {
-      problems.push({ elem: assoc, message: `Association ${names} : multiplicité manquante côté ${typeName(end.reference)}` })
+      problems.push({ elem: assoc, message: `Association ${names}: missing multiplicity on the ${typeName(end.reference)} end` })
     }
   }
   if (heldFields(assoc).length === 2 && assoc.end1.reference !== assoc.end2.reference) {
-    problems.push({ elem: assoc, message: `Association ${names} : attribut généré des deux côtés (ajoute une flèche ou un losange si un seul côté doit l'avoir)` })
+    problems.push({ elem: assoc, message: `Association ${names}: attribute generated on both sides (add an arrow or a diamond if only one side should have it)` })
   }
   return problems
 }
