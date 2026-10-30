@@ -9,10 +9,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
       - run: node test.js
       # main.js needs StarUML to run: syntax only (the Self-Test command covers it inside StarUML)
       - run: node --check main.js
@@ -25,7 +25,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # history and tags, for the notes
       - name: Release the package.json version unless it already is
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,6 +36,8 @@ jobs:
           if gh release view "$tag" > /dev/null 2>&1; then
             echo "$tag already released: bump the version in package.json for a new release"
           else
-            git log -1 --format=%B | grep -v '^Co-Authored-By:' > notes.md
+            # Notes: every commit since the previous release (all of them for the first one)
+            prev="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+            git log "${prev:+$prev..}HEAD" --no-merges --format='### %s%n%n%b' | grep -v '^Co-Authored-By:' > notes.md
             gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md
           fi
