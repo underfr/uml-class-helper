@@ -1,72 +1,73 @@
 # UML Class Helper (StarUML)
 
-Génère le constructeur, les getters et les setters d'une classe dans StarUML (≥ 6), au format PHP.
+Generates the constructor, getters and setters of a class in StarUML (≥ 6), PHP style, and keeps them in sync as the model changes.
+The extension's messages (dialogs, Check Diagram, Self-Test) are in French.
 
 ## Installation
 
-StarUML → **Tools → Extension Manager → Install From URL…** → coller :
+StarUML → **Tools → Extension Manager → Install From URL…** → paste:
 
 ```
 https://github.com/underfr/uml-class-helper
 ```
 
-Puis redémarrer StarUML.
+Then restart StarUML.
 
-**Mise à jour depuis une version avant 0.9.0** (alors nommée « UML Helpers ») : d'abord **Extension Manager → Installed → UML Helpers → Uninstall**, puis installer comme ci-dessus. Sinon les deux versions tournent ensemble ; l'extension le signale au premier changement.
+**Updating from a version before 0.9.0** (then named "UML Helpers"): first **Extension Manager → Installed → UML Helpers → Uninstall**, then install as above. Otherwise both versions run together; the extension warns about it at the first change.
 
-## Utilisation
+## Usage
 
-Sélectionner une classe (ou seulement certains attributs), puis clic droit → **UML Class Helper**, ou `Cmd/Ctrl+Alt+G`.
-**Generate for Whole Diagram** traite toutes les classes du diagramme ouvert.
-**Check Diagram** liste les problèmes du diagramme ouvert (noms, types manquants ou mal écrits comme `Boolean`, multiplicités, associations qui donnent le même attribut ou un nom déjà pris, méthodes orphelines ou non implémentées).
-**Run Self-Test** (menu Tools) vérifie tous les comportements automatiques sur un modèle temporaire, de préférence dans un projet vide.
+Select a class (or only some of its attributes), then right-click → **UML Class Helper**, or `Cmd/Ctrl+Alt+G`.
+**Generate for Whole Diagram** processes every class of the open diagram.
+**Check Diagram** lists the problems of the open diagram (names, missing or misspelled types such as `Boolean`, multiplicities, associations giving the same attribute or a name already taken, orphan or unimplemented methods).
+**Run Self-Test** (Tools menu) checks every automatic behavior on a temporary model, preferably in an empty project.
 
-| Modèle | Généré |
+| Model | Generated |
 |---|---|
 | `-id: ?int` | `+getId(): ?int`, `+setId(id: ?int): void` |
-| `-dateDebut: DateTime` | `+__construct(dateDebut: DateTime)`, getter, setter |
-| `-actif: bool` | `+isActif(): bool` |
-| `-code: string {readOnly}` | getter seulement |
-| toute classe (Generate Constructor, Getters & Setters) | `+__toString(): string` |
-| association vers `Absence` (côté `1` ou `0..1`) | `-absence: ?Absence`, `+getAbsence(): ?Absence`, `+setAbsence(absence: ?Absence): void` |
-| composition vers `Moteur` (côté `1` ou `0..1`) | `-moteur: Moteur` (jamais null, donc sans `?` et dans le `__construct`), getter, setter |
-| association vers `Produit` (côté `0..*`) | `-produits: array<Produit>`, `+getProduits()`, `+setProduits(produits: array<Produit>): void`, `+addProduit(produit: Produit): void`, `+removeProduit(produit: Produit): void` |
-| classe qui implémente une interface / hérite d'une classe abstraite | copie des méthodes de l'interface / des méthodes abstraites |
+| `-startDate: DateTime` | `+__construct(startDate: DateTime)`, getter, setter |
+| `-active: bool` | `+isActive(): bool` |
+| `-code: string {readOnly}` | getter only |
+| any class (Generate Constructor, Getters & Setters) | `+__toString(): string` |
+| association to `Address` (`1` or `0..1` end) | `-address: ?Address`, `+getAddress(): ?Address`, `+setAddress(address: ?Address): void` |
+| composition to `Engine` (`1` or `0..1` end) | `-engine: Engine` (never null, so no `?` and in `__construct`), getter, setter |
+| association to `Product` (`0..*` end) | `-products: array<Product>`, `+getProducts()`, `+setProducts(products: array<Product>): void`, `+addProduct(product: Product): void`, `+removeProduct(product: Product): void` |
+| class implementing an interface / extending an abstract class | copies of the interface methods / abstract methods |
 
-- `__construct` : attributs non statiques dont le type ne commence pas par `?` (ni multiplicité `0..`/`*`).
-- Associations : qui reçoit l'attribut ?
-  1. flèche : la classe d'où part la flèche ;
-  2. agrégation/composition : la classe côté losange (`Produit ◇── Categorie` → `categorie` dans Produit) ;
-  3. association simple : le côté `0..*` reçoit le côté `1` ; sinon les deux.
-  
-  Rôle vide → nom de la classe, au pluriel côté `0..*` (`categories`, `travaux`, `bijoux`, `children` ; pour un pluriel non géré, nommer le rôle).
-  Plusieurs associations qui donneraient le même attribut (deux compositions `Chocoblast ◆── User` → `user`) : la génération demande un nom pour chacune, l'association concernée étant sélectionnée dans le diagramme (`target`, `blasted`), et l'enregistre comme nom de rôle.
-- Héritage (`Employe ──▷ Personne`) : le `__construct` de l'enfant prend d'abord les paramètres du parent (`__construct(nom, prenom, salaire)`) ; getters/setters seulement pour ses propres attributs.
-- Rien n'est dupliqué si on relance ; un `__construct` existant reçoit les nouveaux attributs, y compris ceux des classes filles.
-- Les méthodes sont rangées : `__construct`, puis pour chaque attribut getter, setter, `add`, `remove`, puis les autres méthodes dans leur ordre.
+- `__construct`: non-static attributes whose type doesn't start with `?` (nor a `0..`/`*` multiplicity).
+- Associations: which class gets the attribute?
+  1. arrow: the class the arrow starts from;
+  2. aggregation/composition: the class on the diamond side (`Product ◇── Category` → `category` in Product);
+  3. plain association: the `0..*` side gets the `1` side; otherwise both.
 
-## Automatique
+  Empty role → the class name, plural on the `0..*` side (French and English rules: `categories`, `travaux`, `bijoux`, `children`; name the role for a plural not handled).
+  Several associations that would give the same attribute (two compositions `Chocoblast ◆── User` → `user`): generation asks a name for each, the association concerned being selected in the diagram (`target`, `blasted`), and saves it as the role name.
+- Inheritance (`Employee ──▷ Person`): the child's `__construct` takes the parent's params first (`__construct(lastName, firstName, salary)`); getters/setters only for its own attributes.
+- Nothing is duplicated when run again; an existing `__construct` gets the new attributes, subclasses' ones included.
+- Methods are ordered: `__construct`, then for each attribute its getter, setter, `add`, `remove`, then the other methods in their order.
 
-Chaque changement et tout ce qu'il entraîne s'annulent en un seul `Ctrl+Z`.
+## Automatic
 
-- Les types s'écrivent comme en PHP : `Boolean` → `bool`, `String` → `string`, `Integer` → `int`, `Array<…>` → `array<…>`, `double` → `float`.
-- Toute nouvelle classe reçoit `-id: ?int` avec `getId()`/`setId()`.
-- Ajouter un attribut crée son getter, son setter et son paramètre dans le `__construct` existant ; le renommer/typer ensuite met tout à jour.
-- Changer le type d'un attribut (`-nom: string` → `-nom: int`) met à jour son getter, son setter et son paramètre de `__construct`. Passer en `?string` le retire du constructeur, repasser en `string` l'y remet.
-- Renommer un attribut (`-nom` → `-test`) renomme `getNom`/`setNom`/`isNom` et le paramètre dans le setter et le `__construct`. Vers un nom d'attribut déjà pris : renommage annulé.
-- Passer un type en `bool` renomme `getX` en `isX` (et inversement) ; cocher « static » rend ses méthodes statiques et le retire du `__construct`.
-- Passer en `array<T>` ajoute `addX`/`removeX`, revenir en `?T` les supprime.
-- Supprimer un attribut supprime son getter, son setter et son paramètre du `__construct`.
-- Supprimer une association supprime l'attribut qu'elle avait généré (`-categorie: ?Categorie`) et ses méthodes, y compris quand on supprime la classe à l'autre bout.
-- Renommer une classe met à jour les types texte `?Ancien` → `?Nouveau` partout.
-- Tracer un héritage retire le `-id` de l'enfant (le parent l'a déjà) et ajoute les paramètres du parent dans son `__construct` s'il existe.
-- Ajouter, renommer, retyper ou supprimer un attribut du parent met aussi à jour le `__construct` des classes filles.
-- Modifier une association (nom de rôle, multiplicité, flèche, losange, classe à un bout) renomme, retype ou déplace l'attribut qu'elle avait généré (`?Type` ↔ `array<Type>`, agrégation ↔ composition `?Type` ↔ `Type`, losange changé de côté…). Une association jamais générée n'est pas touchée.
-- Supprimer un héritage retire les paramètres hérités du `__construct` de l'enfant (et de ses filles) et lui remet `-id: ?int`. Le rebrancher sur un autre parent remplace les paramètres de l'ancien par ceux du nouveau.
-- Implémenter une interface copie ses méthodes dans la classe, y compris celles des interfaces qu'elle étend ; hériter d'une classe copie ses méthodes abstraites dans les filles concrètes. Renommer, modifier ou supprimer la méthode d'origine met à jour les copies ; supprimer la flèche « implémente », l'héritage ou l'extension d'interface les retire.
-- Une copie garde un lien caché vers sa méthode d'origine : une méthode écrite à la main avec le même nom n'est jamais modifiée ni supprimée. Les copies faites avant la 0.9.0 n'ont pas ce lien : supprime-les et relance Generate pour qu'elles soient suivies.
+Each change and everything it entails is undone with a single `Ctrl+Z`.
 
-## Développement
+- Types are written as PHP spells them: `Boolean` → `bool`, `String` → `string`, `Integer` → `int`, `Array<…>` → `array<…>`, `double` → `float`.
+- Every new class gets `-id: ?int` with `getId()`/`setId()`.
+- Adding an attribute creates its getter, its setter and its param in the existing `__construct`; renaming/retyping it afterwards updates them all.
+- Changing an attribute's type (`-name: string` → `-name: int`) updates its getter, its setter and its `__construct` param. Switching to `?string` removes it from the constructor, back to `string` puts it back.
+- Renaming an attribute (`-name` → `-label`) renames `getName`/`setName`/`isName` and the param in the setter and the `__construct`. Onto another attribute's name: renaming cancelled.
+- Switching a type to `bool` renames `getX` to `isX` (and back); ticking "static" makes its methods static and removes it from the `__construct`.
+- Switching to `array<T>` adds `addX`/`removeX`, back to `?T` removes them.
+- Deleting an attribute deletes its getter, its setter and its `__construct` param.
+- Deleting an association deletes the attribute it generated (`-category: ?Category`) and its methods, also when the class at the other end is deleted.
+- Renaming a class updates the text types `?Old` → `?New` everywhere.
+- Drawing an inheritance removes the child's `-id` (the parent already has it) and adds the parent's params to its `__construct` if there is one.
+- Adding, renaming, retyping or deleting a parent's attribute also updates the subclasses' `__construct`.
+- Editing an association (role name, multiplicity, arrow, diamond, class at one end) renames, retypes or moves the attribute it generated (`?Type` ↔ `array<Type>`, aggregation ↔ composition `?Type` ↔ `Type`, diamond moved to the other side…). An association never generated is left alone.
+- Deleting an inheritance removes the inherited params from the child's `__construct` (and its subclasses') and gives it back `-id: ?int`. Reconnecting it to another parent replaces the old parent's params with the new one's.
+- Implementing an interface copies its methods into the class, including those of the interfaces it extends; extending a class copies its abstract methods into the concrete subclasses. Renaming, editing or deleting the original method updates the copies; deleting the "implements" arrow, the inheritance or the interface extension removes them.
+- A copy keeps a hidden link to its original method: a hand-written method with the same name is never modified or deleted. Copies made before 0.9.0 have no such link: delete them and run Generate again to have them tracked.
 
-`node test.js` teste la logique ; **Run Self-Test** vérifie le reste dans StarUML.
-À chaque push sur `master`, GitHub Actions lance les tests puis crée la release `vX.Y.Z` de la version de `package.json` si elle n'existe pas encore : changer la version pour publier une release.
+## Development
+
+`node test.js` tests the logic; **Run Self-Test** checks the rest inside StarUML.
+On every push to `master`, GitHub Actions runs the tests, then creates the `vX.Y.Z` release for the `package.json` version if it doesn't exist yet: bump the version to publish a release.
