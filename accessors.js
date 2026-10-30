@@ -8,15 +8,42 @@ const param = (name, attr) => ({ name, type: attr.type, multiplicity: attr.multi
 const getterPrefix = t => (/^\??bool(ean)?$/i.test(typeName(t)) ? 'is' : 'get')
 // array<Produit> -> Produit, else null
 const elementType = t => { const m = /^array<(.+)>$/.exec(typeName(t)); return m ? m[1] : null }
-// shortcut: regular plurals only (journal -> journaux but bal -> baux, tuyaux -> tuyal); name the role for exceptions
-const plural = s => /[sxz]$/.test(s) ? s : /(eau|au|eu)$/.test(s) ? s + 'x' : /al$/.test(s) ? s.slice(0, -2) + 'aux' : s + 's'
-const singular = s => /(eau|eu)x$/.test(s) ? s.slice(0, -1) : /aux$/.test(s) ? s.slice(0, -3) + 'al' : /s$/.test(s) ? s.slice(0, -1) : s
+
+// PHP spelling of the built-in types in a text type: `?Boolean` -> `?bool`, `Array<String>` -> `array<string>`
+const PHP_TYPES = {
+  string: 'string', int: 'int', integer: 'int', long: 'int', bool: 'bool', boolean: 'bool', float: 'float', double: 'float',
+  array: 'array', void: 'void', mixed: 'mixed', object: 'object', callable: 'callable', iterable: 'iterable', null: 'null'
+}
+const normalType = t => (typeof t === 'string' ? t.replace(/[A-Za-z_]\w*/g, w => PHP_TYPES[w.toLowerCase()] || w) : t)
+
+// shortcut: regular FR/EN rules plus the irregulars below; name the role for the others
+const IRREGULAR = {
+  bail: 'baux', corail: 'coraux', soupirail: 'soupiraux', travail: 'travaux', vantail: 'vantaux', vitrail: 'vitraux', oeil: 'yeux',
+  bijou: 'bijoux', caillou: 'cailloux', chou: 'choux', genou: 'genoux', hibou: 'hiboux', joujou: 'joujoux', pou: 'poux',
+  bal: 'bals', carnaval: 'carnavals', chacal: 'chacals', festival: 'festivals', recital: 'recitals', regal: 'regals',
+  bleu: 'bleus', pneu: 'pneus', landau: 'landaus', sarrau: 'sarraus',
+  child: 'children', man: 'men', woman: 'women', person: 'people'
+}
+const SINGULAR = Object.fromEntries(Object.entries(IRREGULAR).map(([one, many]) => [many, one]))
+// `dict` applied to the last word of a camelCase name (heureTravail -> heureTravaux), or null
+const lastWord = (s, dict) => {
+  const m = /^(.*?)([A-Z]?[a-z0-9]+)$/.exec(s)
+  const w = m && dict[m[2].toLowerCase()]
+  return w ? m[1] + (/[A-Z]/.test(m[2][0]) ? cap(w) : w) : null
+}
+const plural = s => lastWord(s, IRREGULAR) || (/[sxz]$/.test(s) ? s : /(eau|au|eu)$/.test(s) ? s + 'x'
+  : /al$/.test(s) ? s.slice(0, -2) + 'aux' : /[^aeiouy]y$/.test(s) ? s.slice(0, -1) + 'ies' : s + 's')
+const singular = s => lastWord(s, SINGULAR) ||
+  (/(eau|eu)x$/.test(s) ? s.slice(0, -1) : /aux$/.test(s) ? s.slice(0, -3) + 'al' : /s$/.test(s) ? s.slice(0, -1) : s)
+// add/remove parameter of an array<item> attribute named `base`: the item class when `base` is its plural
+// (categories: array<Categorie> -> categorie, array<Category> -> category), otherwise the singular of `base`
+const itemName = (base, item) => { const n = lcfirst(typeName(item)); return n && plural(n) === base ? n : singular(base) }
 // addProduit(produit: Produit): void / removeProduit(...) for an array<Produit> attribute named `base`
 const itemSpec = (verb, base, item, isStatic) => ({
-  name: verb + cap(singular(base)),
+  name: verb + cap(itemName(base, item)),
   isStatic: !!isStatic,
   atStart: false,
-  params: [{ name: singular(base), type: item, multiplicity: '' }, { name: '', type: 'void', direction: 'return' }]
+  params: [{ name: itemName(base, item), type: item, multiplicity: '' }, { name: '', type: 'void', direction: 'return' }]
 })
 // Left out of __construct: `?int`, or a multiplicity whose lower bound is 0 (0..1, 0..*, *)
 const optional = attr => typeName(attr.type).startsWith('?') || /^(0|\*)/.test((attr.multiplicity || '').trim())
@@ -80,15 +107,29 @@ function roleClashes (cls, assocs) {
   return held.filter(h => !h.assoc[h.from].name && held.some(o => o !== h && o.field.name === h.field.name))
 }
 
-// Several associations giving `cls` the same attribute name (named or not): only one is generated
+// Association attributes that can't be generated: several associations giving `cls` the same name (named or
+// not, only one is generated), or an attribute of another type already having it
 function lintRoleClashes (cls, assocs) {
   const held = heldBy(cls, assocs)
   return [...new Set(held.map(h => h.field.name))].flatMap(name => {
     const same = held.filter(h => h.field.name === name)
-    return same.length < 2 ? [] : [{
-      elem: same[1].assoc,
-      message: `${cls.name} : ${same.length} associations donnent l'attribut « ${name} », un seul est généré (nommer les rôles ou relancer Generate)`
-    }]
+    const problems = []
+    if (same.length > 1) {
+      problems.push({
+        elem: same[1].assoc,
+        message: `${cls.name} : ${same.length} associations donnent l'attribut « ${name} », un seul est généré (nommer les rôles ou relancer Generate)`
+      })
+    }
+    const attr = cls.attributes.find(a => a.name === name)
+    if (attr && !same.some(h => h.field.type === typeName(attr.type))) {
+      const { assoc, from, field } = same[0]
+      problems.push({
+        elem: attr,
+        message: `${cls.name} : l'attribut « ${name}: ${typeName(attr.type)} » porte le nom que donne l'association vers ` +
+          `${typeName(assoc[from].reference)} (${field.type}), qui n'est donc pas générée (renommer l'un des deux)`
+      })
+    }
+    return problems
   })
 }
 
@@ -144,7 +185,7 @@ function missingAttributes (attrs, fields) {
  * root first) before the class's own.
  * @return {Array<{name: string, isStatic: boolean, atStart: boolean, params: Array<Object>}>}
  */
-function planAccessors (attrs, existingNames, { ctor = false, getters = true, setters = true } = {}, inherited = []) {
+function planAccessors (attrs, existingNames, { ctor = false, getters = true, setters = true, toStringOp = false } = {}, inherited = []) {
   const taken = new Set(existingNames)
   const specs = []
   const add = spec => {
@@ -176,6 +217,7 @@ function planAccessors (attrs, existingNames, { ctor = false, getters = true, se
       if (item) for (const verb of ['add', 'remove']) add(itemSpec(verb, base, item, attr.isStatic))
     }
   }
+  if (toStringOp) add({ name: '__toString', isStatic: false, atStart: false, params: [{ name: '', type: 'string', multiplicity: '', direction: 'return' }] })
   // Planned last: StarUML's fieldInsertAt(0) doesn't shift the indexes later fieldInsert calls compute
   if (ctor) {
     add({
@@ -204,8 +246,8 @@ function generatedFor (attr, ops) {
     base,
     getter,
     setter,
-    adder: many && find('add' + cap(singular(base))),
-    remover: many && find('remove' + cap(singular(base))),
+    adder: many && find('add' + cap(itemName(base, many))),
+    remover: many && find('remove' + cap(itemName(base, many))),
     setterParam: setter && setter.parameters.find(p => p.direction !== 'return'),
     ctor,
     ctorParam: base && ctor && ctor.parameters.find(p => p.name === base)
@@ -216,6 +258,12 @@ function generatedFor (attr, ops) {
 function deletedWith (attr, ops) {
   const g = generatedFor(attr, ops)
   return [g.getter, g.setter, g.adder, g.remover, g.ctorParam].filter(Boolean)
+}
+
+// Reading order: __construct, then each attribute's getter, setter, add, remove, then the other methods as they are
+function orderedOps (attrs, ops) {
+  const accessors = attrs.flatMap(a => { const g = generatedFor(a, ops); return [g.getter, g.setter, g.adder, g.remover] })
+  return [...new Set([...ops.filter(o => o.name === '__construct'), ...accessors.filter(Boolean), ...ops])]
 }
 
 /**
@@ -258,11 +306,11 @@ function planSync (attr, next, ops, attrNames) {
   const nextItem = elementType(next.type)
   for (const [verb, op] of [['add', g.adder], ['remove', g.remover]]) {
     if (op && nextItem) {
-      rename(op, verb + cap(singular(nextBase)), ops)
+      rename(op, verb + cap(itemName(nextBase, nextItem)), ops)
       restatic(op)
       const p = op.parameters.find(q => q.direction !== 'return')
       set(p, 'type', nextItem)
-      set(p, 'name', singular(nextBase))
+      set(p, 'name', itemName(nextBase, nextItem))
     } else if (op) {
       changes.push({ removeOp: op })
     } else if (nextItem && g.setter) {
@@ -308,14 +356,22 @@ function renamedType (t, oldName, newName) {
   return null
 }
 
-// Copy of an operation (interface or abstract method) as a spec for a concrete class
+// Copy of an operation (interface or abstract method) as a spec for a concrete class, tagged with its source
 const opSpec = op => ({
   name: op.name,
   isStatic: !!op.isStatic,
   atStart: false,
+  source: op,
   params: op.parameters.map(p => ({ name: p.name, type: p.type, multiplicity: p.multiplicity, direction: p.direction }))
 })
-const signature = op => JSON.stringify([!!op.isStatic, op.parameters.map(p => [p.name, typeName(p.type), p.multiplicity, p.direction])])
+const signature = op => JSON.stringify(op.parameters.map(p => [p.name, typeName(p.type), p.multiplicity, p.direction]))
+
+// A copy carries a hidden tag referencing its source (null once the source is deleted and the project reopened)
+const COPY_TAG = 'uml-helpers:copyOf'
+const copyTag = op => (op.tags || []).find(t => t.name === COPY_TAG)
+const copySource = op => { const t = copyTag(op); return t ? t.reference : undefined }
+// Copies whose source is no longer among the `sources` the class implements
+const staleCopies = (ops, sources) => ops.filter(o => copyTag(o) && !sources.includes(copySource(o)))
 
 /**
  * Interface and abstract methods a concrete class must have but doesn't: those of the `interfaces` it
@@ -334,10 +390,13 @@ function requiredOps (cls, ancestors, interfaces) {
   return required
 }
 
-// Changes making `impl` match its interface/abstract `source` again (name, static, parameters)
-function syncImplementation (source, impl) {
+// Changes making the copy `impl` match its interface/abstract `source` again (name, static, parameters).
+// Renamed to a name another method of the class (`siblings`) has: that one implements it, the copy goes
+function syncImplementation (source, impl, siblings = []) {
+  if (impl.name !== source.name && siblings.some(o => o !== impl && o.name === source.name)) return [{ removeOp: impl }]
   const changes = []
   if (impl.name !== source.name) changes.push({ assign: impl, field: 'name', value: source.name })
+  if (!!impl.isStatic !== !!source.isStatic) changes.push({ assign: impl, field: 'isStatic', value: !!source.isStatic })
   if (signature(impl) !== signature(source)) changes.push({ replaceParams: impl, params: opSpec(source).params })
   return changes
 }
@@ -351,15 +410,20 @@ function lintClass (cls, inherited, contractNames, required) {
   const warn = (elem, message) => problems.push({ elem, message })
   const where = `${cls.name} :`
   if (!/^[A-Z][A-Za-z0-9]*$/.test(cls.name)) warn(cls, `${where} nom de classe en PascalCase attendu`)
+  const badType = t => typeof t === 'string' && normalType(t) !== t
   for (const a of cls.attributes) {
     if (!/^_?[a-z][A-Za-z0-9]*$/.test(a.name)) warn(a, `${where} attribut « ${a.name} » : camelCase attendu`)
     if (!typeName(a.type)) warn(a, `${where} attribut « ${a.name} » sans type`)
+    if (badType(a.type)) warn(a, `${where} attribut « ${a.name} » : type « ${a.type} » à écrire « ${normalType(a.type)} »`)
   }
   const all = [...inherited, ...cls.attributes]
   const bases = new Set(all.map(a => baseName(a.name)))
-  const items = new Set(all.filter(a => elementType(a.type)).map(a => singular(baseName(a.name))))
+  const items = new Set(all.filter(a => elementType(a.type)).map(a => itemName(baseName(a.name), elementType(a.type))))
   for (const o of cls.operations) {
     if (!/^(__)?[a-z][A-Za-z0-9]*$/.test(o.name)) warn(o, `${where} méthode « ${o.name} » : camelCase attendu`)
+    for (const p of o.parameters.filter(q => badType(q.type))) {
+      warn(o, `${where} « ${o.name} » : type « ${p.type} » à écrire « ${normalType(p.type)} »`)
+    }
     if (contractNames.includes(o.name)) continue
     const acc = /^(get|is|set)([A-Z]\w*)$/.exec(o.name)
     if (acc && !bases.has(lcfirst(acc[2]))) warn(o, `${where} « ${o.name} » sans attribut « ${lcfirst(acc[2])} »`)
@@ -387,6 +451,6 @@ function lintAssociation (assoc) {
 
 module.exports = {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
-  renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
-  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation, lintRoleClashes
+  orderedOps, renamedType, planInheritedParams, droppedInheritedParams, plural, singular, normalType,
+  opSpec, requiredOps, syncImplementation, COPY_TAG, copySource, staleCopies, lintClass, lintAssociation, lintRoleClashes
 }

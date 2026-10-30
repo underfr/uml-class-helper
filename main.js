@@ -1,10 +1,10 @@
 const {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
-  renamedType, planInheritedParams, droppedInheritedParams, opSpec, requiredOps, syncImplementation,
-  lintClass, lintAssociation, lintRoleClashes
+  orderedOps, renamedType, planInheritedParams, droppedInheritedParams, normalType, opSpec, requiredOps, syncImplementation,
+  COPY_TAG, copySource, staleCopies, lintClass, lintAssociation, lintRoleClashes
 } = require('./accessors')
 
-const ALL = { ctor: true, getters: true, setters: true, implement: true }
+const ALL = { ctor: true, getters: true, setters: true, implement: true, toStringOp: true }
 const isClassAttribute = e => e instanceof type.UMLAttribute && e._parent instanceof type.UMLClassifier
 const ctorOnly = cls => cls.operations.filter(o => o.name === '__construct')
 
@@ -39,13 +39,28 @@ const ctorNames = cls => [...inheritedAttrs(cls), ...cls.attributes].map(a => a.
 const ctorNamesWith = (cls, pendingOf) =>
   [...ancestorsOf(cls).reverse(), cls].flatMap(c => [...c.attributes, ...pendingOf(c)]).map(a => a.name)
 
-// Interfaces a class implements, and classes that must copy the methods of an interface / abstract class
+// Interfaces a class implements (with the interfaces they extend), and classes that must copy the methods
+// of an interface / abstract class
 const realizations = (elem, side) => app.repository.getRelationshipsOf(elem, r =>
   r instanceof type.UMLInterfaceRealization && r[side] === elem && r.source instanceof type.UMLClass && r.target instanceof type.UMLInterface)
-const interfacesOf = cls => realizations(cls, 'source').map(r => r.target)
+const superInterfaces = i => app.repository.getRelationshipsOf(i, r =>
+  r instanceof type.UMLGeneralization && r.source === i && r.target instanceof type.UMLInterface).map(r => r.target)
+function interfacesOf (cls) {
+  const all = []
+  const visit = i => {
+    if (all.includes(i)) return
+    all.push(i)
+    superInterfaces(i).forEach(visit)
+  }
+  realizations(cls, 'source').forEach(r => visit(r.target))
+  return all
+}
 const implementersOf = owner => owner instanceof type.UMLInterface
-  ? realizations(owner, 'target').map(r => r.source)
+  ? app.repository.getInstancesOf(['UMLClass']).filter(c => interfacesOf(c).includes(owner))
   : descendantsOf(owner).filter(c => !c.isAbstract)
+// Methods whose copies `cls` may hold: its interfaces' ones and its parents' abstract ones
+const contractSources = cls =>
+  [...interfacesOf(cls).flatMap(i => i.operations), ...ancestorsOf(cls).flatMap(a => a.operations.filter(o => o.isAbstract))]
 // An interface method, or an abstract method of a class: copied into implementers
 const isContract = op => op instanceof type.UMLOperation &&
   (op._parent instanceof type.UMLInterface || (op._parent instanceof type.UMLClass && op.isAbstract))
@@ -67,13 +82,39 @@ function targetsOf (models) {
   return targets
 }
 
-// One builder = one undo step
+// One builder = one operation (its own undo step unless joined, see joinUndoStep); returns it
 function runOperation (name, build) {
   const builder = app.repository.getOperationBuilder()
   builder.begin(name)
   build(builder)
   builder.end()
-  app.repository.doOperation(builder.getOperation()) // no-op when empty
+  const operation = builder.getOperation()
+  app.repository.doOperation(operation) // no-op when empty
+  return operation
+}
+
+// shortcut: StarUML has no API to group operations, so this edits its private undo stack; if that changes, extra steps come back
+const undoStack = () => (app.repository._undoStack && Array.isArray(app.repository._undoStack.stack) ? app.repository._undoStack.stack : null)
+const lastUndoStep = () => { const stack = undoStack(); return stack ? stack[stack.length - 1] : null }
+
+// Runs `fn`; the operations it executes (cascades included) join `root`'s undo step: one Ctrl+Z undoes it all
+function joinUndoStep (root, fn) {
+  const stack = undoStack()
+  if (!root || !stack || !stack.includes(root)) return fn()
+  const executed = [] // in execution order (beforeExecuteOperation), which redo replays
+  const collect = op => executed.push(op)
+  app.repository.on('beforeExecuteOperation', collect)
+  try {
+    return fn()
+  } finally {
+    app.repository.removeListener('beforeExecuteOperation', collect)
+    for (const op of executed) {
+      const i = stack.indexOf(op)
+      if (i === -1 || op === root) continue // not undoable, or already joined by a nested call
+      stack.splice(i, 1)
+      root.ops.push(...op.ops)
+    }
+  }
 }
 
 function insertOperation (builder, cls, spec) {
@@ -84,6 +125,11 @@ function insertOperation (builder, cls, spec) {
   op.isStatic = spec.isStatic
   for (const p of spec.params) {
     op.parameters.push(Object.assign(new type.UMLParameter(), { _parent: op }, p))
+  }
+  if (spec.source) {
+    // Copy of an interface/abstract method: found again by this reference, not by name, so a method of the
+    // same name written by hand is never taken for it
+    op.tags.push(Object.assign(new type.Tag(), { _parent: op, name: COPY_TAG, kind: 'reference', reference: spec.source, hidden: true }))
   }
   builder.insert(op)
   if (spec.atStart) {
@@ -102,7 +148,8 @@ function addGenerated (builder, cls, { attrs, newAttrs }, options, pendingOf = c
     builder.fieldInsert(cls, 'attributes', attr)
   }
   const inherited = ancestorsOf(cls).reverse().flatMap(p => [...p.attributes, ...pendingOf(p)])
-  const specs = planAccessors(attrs, cls.operations.map(o => o.name), options, inherited)
+  const classOptions = { ...options, toStringOp: !!options.toStringOp && cls instanceof type.UMLClass }
+  const specs = planAccessors(attrs, cls.operations.map(o => o.name), classOptions, inherited)
   for (const spec of specs) insertOperation(builder, cls, spec)
   // planAccessors only creates a missing __construct: new attributes also go into existing ones, subclasses' too
   for (const c of [cls, ...descendantsOf(cls)]) {
@@ -166,14 +213,28 @@ function generate (options, models = app.selections.getSelectedModels()) {
   // Subclasses first: their parents then insert params into the same constructors at lower indexes
   // (fieldInsertAt indexes are computed before any insert is applied)
   const ordered = [...targets].sort(([a], [b]) => ancestorsOf(b).length - ancestorsOf(a).length)
-  runOperation('generate accessors', builder => {
+  const generated = runOperation('generate accessors', builder => {
     for (const [cls, target] of ordered) {
       // Before addGenerated: its __construct goes in last with fieldInsertAt, which later fieldInserts don't see
       if (options.implement) count += addRequired(builder, cls)
       count += addGenerated(builder, cls, target, options, pendingOf)
     }
   })
+  joinUndoStep(generated, () => runOperation('reorder methods', builder => {
+    for (const cls of targets.keys()) reorderOps(builder, cls)
+  }))
   app.toast.info(count > 0 ? `${count} élément(s) généré(s).` : 'Rien à générer (déjà présents).')
+}
+
+// Puts the methods of `cls` in reading order (orderedOps), moving as few as possible
+function reorderOps (builder, cls) {
+  const now = [...cls.operations]
+  orderedOps(cls.attributes, now).forEach((op, i) => {
+    if (now[i] === op) return
+    now.splice(now.indexOf(op), 1)
+    now.splice(i, 0, op)
+    builder.fieldReorder(cls, 'operations', op, i)
+  })
 }
 
 // Several associations giving a class the same attribute (two compositions to User, both `user`): asks a role
@@ -199,15 +260,16 @@ async function nameClashingRoles (classes) {
     }
   }
   // The role names rename the attributes already generated (onOperationExecuted), then generate adds the others
-  runOperation('name association roles', builder => {
+  return runOperation('name association roles', builder => {
     for (const { end, name } of named) builder.fieldAssign(end, 'name', name)
   })
 }
 
-// generate, after asking names for clashing association roles; the selection is read first, the dialogs change it
+// generate, after asking names for clashing association roles (same undo step); the selection is read first,
+// the dialogs change it
 async function generateNaming (options, models = app.selections.getSelectedModels()) {
-  await nameClashingRoles(models.filter(m => m instanceof type.UMLClassifier))
-  generate(options, models)
+  const naming = await nameClashingRoles(models.filter(m => m instanceof type.UMLClassifier))
+  joinUndoStep(naming, () => generate(options, models))
 }
 
 const diagramClasses = diagram => diagram.ownedViews.filter(v => v instanceof type.UMLClassView).map(v => v.model)
@@ -230,38 +292,54 @@ function addId (builder, cls) {
   addGenerated(builder, cls, { attrs: [id], newAttrs: [] }, { getters: true, setters: true })
 }
 
-// Right after the user creates an element (separate undo step):
+// Right after the user creates an element (same undo step as the creation):
 // a class gets -id: ?int with its getter/setter, an attribute gets its getter/setter and constructor param,
 // a class implementing an interface or extending an abstract class gets the methods it must have
 function onElementCreated (model) {
+  if (duplicated()) return
   try {
-    if (model instanceof type.UMLClass && !model.attributes.some(a => a.name === 'id')) {
-      runOperation('add id', builder => addId(builder, model))
-    } else if (isClassAttribute(model)) {
-      const cls = model._parent
-      runOperation('add accessors', builder => {
-        addGenerated(builder, cls, { attrs: [model], newAttrs: [] }, { getters: true, setters: true })
-        // Only adds the param to existing constructors, in the class and its subclasses
-        applyChanges(builder, planSync(model, model, cls.operations, ctorNames(cls)))
-        for (const child of descendantsOf(cls)) {
-          applyChanges(builder, planSync(model, model, ctorOnly(child), ctorNames(child)))
-        }
-      })
-    } else if (model instanceof type.UMLGeneralization &&
-      model.source instanceof type.UMLClass && model.target instanceof type.UMLClass) {
-      onInheritance(model.source)
-    } else if (model instanceof type.UMLInterfaceRealization && model.source instanceof type.UMLClass) {
-      runOperation('implement interface', builder => addRequired(builder, model.source))
-    } else if (isContract(model)) {
-      // New interface method: copied into the classes implementing it
-      runOperation('copy interface method', builder => {
-        for (const impl of implementersOf(model._parent)) {
-          if (!impl.operations.some(o => o.name === model.name)) insertOperation(builder, impl, opSpec(model))
-        }
-      })
-    }
+    // The creation is the last undo step (checked, so nothing joins an unrelated one)
+    const last = lastUndoStep()
+    const creation = last && last.ops.some(op => op.op === 'I' && op.arg && op.arg._id === model._id) ? last : null
+    joinUndoStep(creation, () => {
+      if (model instanceof type.UMLClass && !model.attributes.some(a => a.name === 'id')) {
+        runOperation('add id', builder => addId(builder, model))
+      } else if (isClassAttribute(model)) {
+        const cls = model._parent
+        runOperation('add accessors', builder => {
+          addGenerated(builder, cls, { attrs: [model], newAttrs: [] }, { getters: true, setters: true })
+          // Only adds the param to existing constructors, in the class and its subclasses
+          applyChanges(builder, planSync(model, model, cls.operations, ctorNames(cls)))
+          for (const child of descendantsOf(cls)) {
+            applyChanges(builder, planSync(model, model, ctorOnly(child), ctorNames(child)))
+          }
+        })
+        runOperation('reorder methods', builder => reorderOps(builder, cls))
+      } else if (model instanceof type.UMLGeneralization || model instanceof type.UMLInterfaceRealization) {
+        onRelationship(model)
+      } else if (isContract(model)) {
+        // New interface method: copied into the classes implementing it (unless one has a method of that name)
+        runOperation('copy interface method', builder => {
+          for (const impl of implementersOf(model._parent)) {
+            if (!impl.operations.some(o => o.name === model.name)) insertOperation(builder, impl, opSpec(model))
+          }
+        })
+      }
+    })
   } catch (err) {
     console.error('uml-helpers: generation on create failed', err)
+  }
+}
+
+// A relationship drawn or reconnected: inheritance between classes (id, constructor params), and the methods
+// of the interfaces / abstract parents now to implement
+function onRelationship (rel) {
+  if (rel instanceof type.UMLGeneralization && rel.source instanceof type.UMLClass && rel.target instanceof type.UMLClass) {
+    onInheritance(rel.source)
+  } else if (rel instanceof type.UMLGeneralization && rel.source instanceof type.UMLInterface && rel.target instanceof type.UMLInterface) {
+    runOperation('implement interface', builder => implementersOf(rel.source).forEach(cls => addRequired(builder, cls)))
+  } else if (rel instanceof type.UMLInterfaceRealization && rel.source instanceof type.UMLClass) {
+    runOperation('implement interface', builder => addRequired(builder, rel.source))
   }
 }
 
@@ -300,20 +378,22 @@ function capture (operation) {
   // Attributes deleted on their own (not along with their class)
   const attrs = removed.filter(e => isClassAttribute(e) && !removedIds.has(e._parent._id))
     .map(a => ({ cls: a._parent, name: a.name, type: a.type }))
-  // Associations and inheritances deleted, including those owned by a deleted class
+  // Associations deleted, including those owned by a deleted class; inheritances and realizations deleted
   const assocFields = []
-  const inheritances = []
+  const lost = new Set()
   for (const root of removed) {
     root.traverse(e => {
       if (e instanceof type.UMLAssociation) {
         for (const h of assocSnapshot(e).filter(s => s.attr)) assocFields.push({ cls: h.holder, name: h.field.name, type: h.field.type })
-      } else if (e instanceof type.UMLGeneralization && e.source instanceof type.UMLClass) {
-        inheritances.push({ child: e.source, names: inheritedAttrs(e.source).map(a => a.name) })
+      } else if (e instanceof type.UMLGeneralization || e instanceof type.UMLInterfaceRealization) {
+        lost.add(e)
       }
     })
   }
-  // Associations edited: an end's role/multiplicity/arrow/diamond/class, or a class renamed (default role)
+  // Associations edited: an end's role/multiplicity/arrow/diamond/class, or a class renamed (default role).
+  // Inheritances and realizations reconnected to another class: lost here, drawn again after
   const edited = new Set()
+  const relinked = new Set()
   for (const op of operation.ops) {
     if (op.op !== 'a') continue // 'a' = FIELD_ASSIGN
     const elem = app.repository.get(op.arg._id)
@@ -322,23 +402,42 @@ function capture (operation) {
       edited.add(elem._parent)
     } else if (elem instanceof type.UMLClassifier && op.arg.f === 'name') {
       for (const r of app.repository.getRelationshipsOf(elem, r => r instanceof type.UMLAssociation)) edited.add(r)
+    } else if ((elem instanceof type.UMLGeneralization || elem instanceof type.UMLInterfaceRealization) &&
+      ['source', 'target'].includes(op.arg.f)) {
+      lost.add(elem)
+      relinked.add(elem)
     }
   }
   const assocs = [...edited].filter(a => !removedIds.has(a._id)).map(assoc => ({ assoc, before: assocSnapshot(assoc) }))
-  // Interface/abstract methods deleted or edited (name, static, abstract, parameters)
-  const deletedContracts = removed.filter(e => isContract(e) && !removedIds.has(e._parent._id))
-    .map(op => ({ owner: op._parent, name: op.name }))
-  const touched = new Map()
+  // What the lost relationships gave: inherited constructor params, and classes whose copies may go stale
+  const inheritances = []
+  const prune = new Set()
+  for (const rel of lost) {
+    if (rel instanceof type.UMLGeneralization && rel.source instanceof type.UMLClass) {
+      inheritances.push({ child: rel.source, names: inheritedAttrs(rel.source).map(a => a.name) })
+      for (const c of [rel.source, ...descendantsOf(rel.source)]) prune.add(c)
+    } else if (rel.source instanceof type.UMLInterface) {
+      for (const c of implementersOf(rel.source)) prune.add(c)
+    } else if (rel.source instanceof type.UMLClass) {
+      prune.add(rel.source)
+    }
+  }
+  // Interface/abstract methods deleted or edited (name, static, abstract, parameters): their implementers' copies
+  for (const op of removed.filter(e => isContract(e) && !removedIds.has(e._parent._id))) {
+    for (const c of implementersOf(op._parent)) prune.add(c)
+  }
+  const contracts = new Set()
   for (const op of operation.ops) {
     const elem = app.repository.get(op.arg && op.arg._id)
     const owner = elem instanceof type.UMLParameter ? elem._parent : elem
     const edit = (op.op === 'a' && (isContract(owner) || (elem instanceof type.UMLOperation && op.arg.f === 'isAbstract'))) ||
       (['i', 'r'].includes(op.op) && op.arg.f === 'parameters' && isContract(elem)) // FIELD_INSERT / FIELD_REMOVE
-    if (edit && owner instanceof type.UMLOperation && !touched.has(owner)) touched.set(owner, owner.name)
+    if (edit && owner instanceof type.UMLOperation) contracts.add(owner)
   }
-  const contracts = [...touched].map(([op, name]) => ({ op, name }))
-  return attrs.length + assocFields.length + inheritances.length + assocs.length + deletedContracts.length + contracts.length > 0
-    ? { operation, attrs, assocFields, inheritances, assocs, deletedContracts, contracts }
+  // A method no longer abstract: its copies go
+  for (const op of contracts) for (const c of implementersOf(op._parent)) prune.add(c)
+  return attrs.length + assocFields.length + inheritances.length + assocs.length + prune.size + contracts.size + relinked.size > 0
+    ? { operation, attrs, assocFields, inheritances, assocs, prune, contracts, relinked }
     : null
 }
 
@@ -346,14 +445,24 @@ function capture (operation) {
 // Ops are appended to the user's operation: one undo step, and undo/redo replay them as-is.
 // Not emitted for undo/redo, so those never re-trigger it.
 function onBeforeOperation (operation) {
-  if (operation.bypass) return
+  if (operation.bypass || duplicated()) return
   try {
     pending = capture(operation)
     const changedAttrs = new Map()
     const renamedClasses = []
     for (const op of operation.ops) {
+      // Typed `Boolean`, `String`, `Integer`...: stored as PHP spells it (bool, string, int), whether set on its
+      // own or with a new element ('I' = INSERT, serialized with its parameters)
+      if (op.op === 'I') {
+        for (const data of [op.arg, ...(op.arg.parameters || [])]) {
+          if (['UMLAttribute', 'UMLParameter'].includes(data._type) && typeof data.type === 'string') data.type = normalType(data.type)
+        }
+      }
       if (op.op !== 'a') continue // 'a' = FIELD_ASSIGN
       const elem = app.repository.get(op.arg._id)
+      if ((elem instanceof type.UMLAttribute || elem instanceof type.UMLParameter) && op.arg.f === 'type' && typeof op.arg.n === 'string') {
+        op.arg.n = normalType(op.arg.n)
+      }
       if (isClassAttribute(elem) && ['name', 'type', 'multiplicity', 'isStatic'].includes(op.arg.f)) {
         // Two attributes with one name would share their getters/setters: keep the old name
         if (op.arg.f === 'name' && op.arg.n !== op.arg.o && elem._parent.attributes.some(a => a !== elem && a.name === op.arg.n)) {
@@ -401,87 +510,89 @@ function onBeforeOperation (operation) {
   }
 }
 
-// After the user's operation, as separate operations through public APIs whose own events cascade
-// (getters, setters, constructor params): extra undo steps.
+// After the user's operation, through public APIs whose own events cascade (getters, setters, constructor
+// params); everything joins the user's undo step.
 function onOperationExecuted (operation) {
   if (!pending || pending.operation !== operation) return
-  const { attrs, assocFields, inheritances, assocs, deletedContracts, contracts } = pending
+  const { attrs, assocFields, inheritances, assocs, prune, contracts, relinked } = pending
   pending = null // nested operations below capture their own
   const alive = e => !!app.repository.get(e._id)
   try {
-    // Deleted attribute: its getter, setter and constructor params (subclasses too).
-    // Deleted association: the attribute it generated, with its methods.
-    const orphans = []
-    for (const { cls, name, type: t } of assocFields) {
-      const attr = alive(cls) && cls.attributes.find(a => a.name === name && a.type === t)
-      if (attr) orphans.push(attr, ...deletedWith(attr, cls.operations))
-    }
-    for (const { cls, name, type: t } of attrs) {
-      if (!alive(cls)) continue
-      orphans.push(...deletedWith({ name, type: t }, cls.operations))
-      for (const child of descendantsOf(cls)) orphans.push(...deletedWith({ name }, ctorOnly(child)))
-    }
-    // Deleted interface/abstract method: its copies in the implementing classes
-    for (const { owner, name } of deletedContracts) {
-      if (!alive(owner)) continue
-      for (const impl of implementersOf(owner)) orphans.push(...impl.operations.filter(o => o.name === name))
-    }
-    if (orphans.length > 0) app.engine.deleteElements([...new Set(orphans)], [])
+    joinUndoStep(operation, () => {
+      // Deleted attribute: its getter, setter and constructor params (subclasses too).
+      // Deleted association: the attribute it generated, with its methods.
+      const orphans = []
+      for (const { cls, name, type: t } of assocFields) {
+        const attr = alive(cls) && cls.attributes.find(a => a.name === name && a.type === t)
+        if (attr) orphans.push(attr, ...deletedWith(attr, cls.operations))
+      }
+      for (const { cls, name, type: t } of attrs) {
+        if (!alive(cls)) continue
+        orphans.push(...deletedWith({ name, type: t }, cls.operations))
+        for (const child of descendantsOf(cls)) orphans.push(...deletedWith({ name }, ctorOnly(child)))
+      }
+      // Copies of a method deleted, no longer abstract, or no longer implemented (inheritance or realization
+      // deleted or reconnected, interface no longer extended)
+      for (const cls of [...prune].filter(alive)) orphans.push(...staleCopies(cls.operations, contractSources(cls)))
+      if (orphans.length > 0) app.engine.deleteElements([...new Set(orphans)], [])
 
-    // Edited interface/abstract method: its copies follow (name, static, parameters); new abstract one: copied
-    const live = contracts.filter(c => alive(c.op) && isContract(c.op))
-    if (live.length > 0) {
-      runOperation('sync implementations', builder => {
-        for (const { op, name } of live) {
-          for (const impl of implementersOf(op._parent)) {
-            const copy = impl.operations.find(o => o.name === name) || impl.operations.find(o => o.name === op.name)
-            if (copy) {
-              applyChanges(builder, syncImplementation(op, copy))
-            } else if (requiredOps(impl, ancestorsOf(impl), interfacesOf(impl)).includes(op)) {
-              insertOperation(builder, impl, opSpec(op))
+      // Edited interface/abstract method: its copies follow (name, static, parameters); new abstract one: copied
+      const live = [...contracts].filter(op => alive(op) && isContract(op))
+      if (live.length > 0) {
+        runOperation('sync implementations', builder => {
+          for (const op of live) {
+            for (const impl of implementersOf(op._parent)) {
+              const copy = impl.operations.find(o => copySource(o) === op)
+              if (copy) {
+                applyChanges(builder, syncImplementation(op, copy, impl.operations))
+              } else if (requiredOps(impl, ancestorsOf(impl), interfacesOf(impl)).includes(op)) {
+                insertOperation(builder, impl, opSpec(op))
+              }
             }
           }
-        }
-      })
-    }
-
-    // Deleted inheritance: params no longer inherited leave the constructors; the child gets its id back
-    const dropped = inheritances.filter(i => alive(i.child))
-    if (dropped.length > 0) {
-      runOperation('remove inherited params', builder => {
-        for (const { child, names } of dropped) {
-          const now = inheritedAttrs(child).map(a => a.name)
-          for (const cls of [child, ...descendantsOf(child)]) {
-            const ctor = ctorOnly(cls)[0]
-            applyChanges(builder, droppedInheritedParams(ctor, names, now, cls.attributes.map(a => a.name)))
-          }
-          if (!child.attributes.some(a => a.name === 'id') && !now.includes('id')) addId(builder, child)
-        }
-      })
-    }
-
-    // Edited association: rename/retype, move or remove the attribute it generated
-    for (const { assoc, before } of assocs) {
-      if (!alive(assoc)) continue
-      const plan = planAssocUpdate(before, heldFields(assoc))
-      for (const { attr, next } of plan.updates) {
-        if (alive(attr) && (attr.name !== next.name || attr.type !== next.type)) {
-          app.engine.setProperties(attr, { name: next.name, type: next.type })
-        }
-      }
-      const gone = plan.deletes.map(d => d.attr).filter(alive)
-      if (gone.length > 0) app.engine.deleteElements(gone, [])
-      for (const { holder, field } of plan.creates) {
-        if (!alive(holder) || holder.attributes.some(a => a.name === field.name)) continue
-        // Through the factory so onElementCreated adds its getter, setter and constructor params
-        app.factory.createModel({
-          id: 'UMLAttribute',
-          parent: holder,
-          field: 'attributes',
-          modelInitializer: m => Object.assign(m, { name: field.name, type: field.type, visibility: 'private' })
         })
       }
-    }
+
+      // Inheritance deleted or reconnected: params no longer inherited leave the constructors; the child gets its id back
+      const dropped = inheritances.filter(i => alive(i.child))
+      if (dropped.length > 0) {
+        runOperation('remove inherited params', builder => {
+          for (const { child, names } of dropped) {
+            const now = inheritedAttrs(child).map(a => a.name)
+            for (const cls of [child, ...descendantsOf(child)]) {
+              const ctor = ctorOnly(cls)[0]
+              applyChanges(builder, droppedInheritedParams(ctor, names, now, cls.attributes.map(a => a.name)))
+            }
+            if (!child.attributes.some(a => a.name === 'id') && !now.includes('id')) addId(builder, child)
+          }
+        })
+      }
+      // Reconnected: as if just drawn (new parent's params and id, methods to implement)
+      for (const rel of relinked) if (alive(rel)) onRelationship(rel)
+
+      // Edited association: rename/retype, move or remove the attribute it generated
+      for (const { assoc, before } of assocs) {
+        if (!alive(assoc)) continue
+        const plan = planAssocUpdate(before, heldFields(assoc))
+        for (const { attr, next } of plan.updates) {
+          if (alive(attr) && (attr.name !== next.name || attr.type !== next.type)) {
+            app.engine.setProperties(attr, { name: next.name, type: next.type })
+          }
+        }
+        const gone = plan.deletes.map(d => d.attr).filter(alive)
+        if (gone.length > 0) app.engine.deleteElements(gone, [])
+        for (const { holder, field } of plan.creates) {
+          if (!alive(holder) || holder.attributes.some(a => a.name === field.name)) continue
+          // Through the factory so onElementCreated adds its getter, setter and constructor params
+          app.factory.createModel({
+            id: 'UMLAttribute',
+            parent: holder,
+            field: 'attributes',
+            modelInitializer: m => Object.assign(m, { name: field.name, type: field.type, visibility: 'private' })
+          })
+        }
+      }
+    })
   } catch (err) {
     console.error('uml-helpers: reconcile failed', err)
   }
@@ -512,7 +623,7 @@ function checkDiagram () {
 }
 
 // Runs every automatic behavior on a temporary model of the open project, then deletes it
-function selfTest () {
+async function selfTest () {
   if (app.dialogs.showConfirmDialog('Le test crée puis supprime un modèle temporaire dans le projet ouvert ' +
     '(idéalement un projet vide). Continuer ?') !== 'ok') return
   const results = []
@@ -537,6 +648,8 @@ function selfTest () {
       app.engine.setProperties(a, { name, type: t })
       return a
     }
+    const newOp = (owner, name) =>
+      app.factory.createModel({ id: 'UMLOperation', parent: owner, field: 'operations', modelInitializer: m => { m.name = name } })
 
     const pView = node('UMLClass', 20, 'Produit')
     const P = pView.model
@@ -561,6 +674,13 @@ function selfTest () {
     check('Nom déjà pris : renommage annulé', prix.name === 'prix' && P.operations.filter(o => o.name === 'getLibelle').length === 1)
     app.engine.deleteElements([prix], [])
     check('Suppression : getPrix(), setPrix() et param supprimés', !has(P, 'getPrix') && !has(P, 'setPrix') && ctorParams(P) === '["libelle"]')
+    const dispo = newAttr(P, 'dispo', 'Boolean')
+    check('Type « Boolean » enregistré « bool » : isDispo()', dispo.type === 'bool' && has(P, 'isDispo'))
+    app.engine.deleteElements([dispo], [])
+    app.repository.undo()
+    check('Un seul Ctrl+Z annule la suppression : attribut, isDispo() et param revenus',
+      attr(P, 'dispo') && has(P, 'isDispo') && ctorParams(P) === '["libelle","dispo"]')
+    app.engine.deleteElements([attr(P, 'dispo')], [])
 
     const cView = node('UMLClass', 260, 'Categorie')
     const C = cView.model
@@ -570,6 +690,8 @@ function selfTest () {
     app.engine.setProperty(assoc.end2, 'aggregation', 'shared')
     generate(ALL, [P, C])
     check('Agrégation : -categorie: ?Categorie côté losange seulement', attr(P, 'categorie') && attr(P, 'categorie').type === '?Categorie' && has(P, 'getCategorie') && C.attributes.length === 1)
+    check('Méthodes rangées : __construct, accesseurs par attribut, __toString()', P.operations.map(o => o.name).join(', ') ===
+      '__construct, getId, setId, getLibelle, setLibelle, isActif, setActif, getCategorie, setCategorie, __toString')
     app.engine.setProperty(assoc.end2, 'aggregation', 'composite')
     check('Composition : -categorie: Categorie sans ?, dans le constructeur', attr(P, 'categorie') && attr(P, 'categorie').type === 'Categorie' && ctorParams(P) === '["libelle","categorie"]')
     app.engine.setProperty(assoc.end2, 'aggregation', 'shared')
@@ -596,14 +718,41 @@ function selfTest () {
     generate(ALL, [K])
     check('2 compositions vers User : un seul -user, 2 rôles à nommer, signalé par Check Diagram', attr(K, 'user') && K.attributes.length === 2 &&
       roleClashes(K, [b1, b2]).length === 2 && lintRoleClashes(K, associationsOf(K)).length === 1)
-    app.engine.setProperty(b2.end1, 'name', 'blasted')
-    check('Rôle « blasted » sur la 2e : -user de la 1re intact', attr(K, 'user') && !attr(K, 'blasted'))
-    app.engine.setProperty(b1.end1, 'name', 'target')
-    generate(ALL, [K])
-    check('Rôles nommés : -target: User, -blasted: User, __construct(target, blasted)', attr(K, 'target') && attr(K, 'blasted') &&
-      attr(K, 'blasted').type === 'User' && !attr(K, 'user') && has(K, 'getBlasted') && ctorParams(K) === '["target","blasted"]')
+    // The naming dialog, answered by the test
+    const showInputDialog = app.dialogs.showInputDialog
+    const answers = ['target', 'blasted']
+    app.dialogs.showInputDialog = () => Promise.resolve({ buttonId: 'ok', returnValue: answers.shift() })
+    try {
+      await generateNaming(ALL, [K])
+    } finally {
+      app.dialogs.showInputDialog = showInputDialog
+    }
+    const named = () => attr(K, 'target') && attr(K, 'blasted') && attr(K, 'blasted').type === 'User' && !attr(K, 'user') &&
+      has(K, 'getBlasted') && ctorParams(K) === '["target","blasted"]'
+    check('Noms demandés : -target: User, -blasted: User, __construct(target, blasted)', named())
+    app.repository.undo()
+    check('Un seul Ctrl+Z annule noms et génération : -user revenu', attr(K, 'user') && !attr(K, 'target') && !attr(K, 'blasted') && !b1.end1.name)
+    app.repository.redo()
+    check('Rétablir : -target et -blasted revenus', named())
     app.engine.deleteElements([b2], [])
     check('2e composition supprimée : -blasted supprimé, -target reste', !attr(K, 'blasted') && attr(K, 'target'))
+
+    // Parent and child generated together (Generate for Whole Diagram), both getting an attribute
+    const aView = node('UMLClass', 1700, 'Animal')
+    const dView = node('UMLClass', 1940, 'Chien')
+    const [A, D] = [aView.model, dView.model]
+    newAttr(A, 'nom', 'string')
+    newAttr(D, 'race', 'string')
+    edge('UMLGeneralization', dView, aView)
+    generate(ALL, [D])
+    for (const [holder, part] of [[aView, cView], [dView, uView]]) {
+      const a = edge('UMLAssociation', part, holder).model
+      app.engine.setProperty(a.end1, 'multiplicity', '1')
+      app.engine.setProperty(a.end2, 'aggregation', 'composite')
+    }
+    generate(ALL, [A, D])
+    check('Parent et fille générés ensemble : Chien::__construct(nom, famille, race, user)',
+      ctorParams(D) === '["nom","famille","race","user"]' && ctorParams(A) === '["nom","famille"]')
 
     const eView = node('UMLClass', 500, 'Employe')
     const E = eView.model
@@ -624,18 +773,35 @@ function selfTest () {
     const abs = app.factory.createModel({ id: 'UMLOperation', parent: P, field: 'operations' })
     app.engine.setProperties(abs, { name: 'calculer', isAbstract: true })
     check('Méthode abstraite : calculer() copiée dans l\'enfant', has(E, 'calculer'))
+    app.engine.setProperty(gen, 'target', C)
+    check('Héritage rebranché sur Famille : params de Produit et calculer() retirés',
+      ctorParams(E) === '["salaire"]' && !has(E, 'calculer') && !attr(E, 'id'))
+    app.engine.setProperty(gen, 'target', P)
+    check('Héritage rebranché sur Produit : params et calculer() revenus', ctorParams(E) === '["libelle","ville","salaire"]' && has(E, 'calculer'))
     app.engine.deleteElements([gen], [])
     check('Héritage supprimé : params hérités retirés, id remis', ctorParams(E) === '["salaire"]' && attr(E, 'id') && has(E, 'getId'))
 
     const iView = node('UMLInterface', 740, 'Affichable')
     const opI = app.factory.createModel({ id: 'UMLOperation', parent: iView.model, field: 'operations' })
     app.engine.setProperty(opI, 'name', 'afficher')
-    edge('UMLInterfaceRealization', eView, iView)
+    const real = edge('UMLInterfaceRealization', eView, iView).model
     check('Interface : afficher() copiée', has(E, 'afficher'))
     app.engine.setProperty(opI, 'name', 'imprimer')
     check('Méthode d\'interface renommée : la copie suit', has(E, 'imprimer') && !has(E, 'afficher'))
     app.engine.deleteElements([opI], [])
     check('Méthode d\'interface supprimée : copie supprimée', !has(E, 'imprimer'))
+    newOp(E, 'decrire')
+    const opD = newOp(iView.model, 'decrire')
+    app.engine.setProperty(opD, 'name', 'resumer')
+    check('decrire() écrite à la main, même nom qu\'une méthode d\'interface : pas alignée', has(E, 'decrire') && has(E, 'resumer'))
+    const xView = node('UMLInterface', 2180, 'Exportable')
+    newOp(xView.model, 'exporter')
+    const ext = edge('UMLGeneralization', iView, xView).model
+    check('Interface qui en étend une autre : exporter() copiée', has(E, 'exporter'))
+    app.engine.deleteElements([ext], [])
+    check('Extension d\'interface supprimée : exporter() retirée', !has(E, 'exporter'))
+    app.engine.deleteElements([real], [])
+    check('Flèche « implémente » supprimée : resumer() retirée, decrire() gardée', !has(E, 'resumer') && has(E, 'decrire'))
 
     const bad = newAttr(E, 'Mauvais', '')
     const problems = lintClass(E, inheritedAttrs(E), [], [])
@@ -650,7 +816,24 @@ function selfTest () {
   app.dialogs.showTextDialog(failed > 0 ? `${failed} test(s) en échec` : 'Tous les tests passent', results.join('\n'))
 }
 
+// Two copies loaded would make every change twice (duplicate params, methods): the package was named
+// staruml.uml-helpers before 0.9.0, so updating through Install From URL keeps the old one too
+const warnDuplicate = () => app.dialogs.showAlertDialog('UML Class Helper est installé deux fois (ancien nom : « UML Helpers »). ' +
+  'Désinstallez l\'ancienne version dans Tools → Extension Manager → Installed, puis redémarrez StarUML.')
+let duplicate
+function duplicated () {
+  if (duplicate === undefined) {
+    // The old copy's listener has the same name; checked at the first change, once every extension is loaded
+    duplicate = app.repository.listeners('beforeExecuteOperation').some(f => f.name === 'onBeforeOperation' && f !== onBeforeOperation)
+    if (duplicate) warnDuplicate()
+  }
+  return duplicate
+}
+
 function init () {
+  // A second copy of this version: the first one loaded does the work
+  if (global.umlClassHelperLoaded) return warnDuplicate()
+  global.umlClassHelperLoaded = true
   app.factory.on('elementCreated', onElementCreated)
   app.repository.on('beforeExecuteOperation', onBeforeOperation)
   app.repository.on('operationExecuted', onOperationExecuted)

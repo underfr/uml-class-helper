@@ -4,7 +4,7 @@
       "id": "tools",
       "submenu": [
         {
-          "label": "UML Helpers",
+          "label": "UML Class Helper",
           "id": "tools.uml-helpers",
           "submenu": [
             { "label": "Generate Constructor, Getters & Setters", "id": "tools.uml-helpers.accessors", "command": "uml-helpers:accessors" },
@@ -24,7 +24,7 @@
   "context-menu": {
     "diagram-canvas": [
       {
-        "label": "UML Helpers",
+        "label": "UML Class Helper",
         "id": "uml-helpers",
         "submenu": [
           { "label": "Generate Constructor, Getters & Setters", "id": "uml-helpers.accessors", "command": "uml-helpers:accessors" },
@@ -39,7 +39,7 @@
     ],
     "model-explorer": [
       {
-        "label": "UML Helpers",
+        "label": "UML Class Helper",
         "id": "uml-helpers",
         "submenu": [
           { "label": "Generate Constructor, Getters & Setters", "id": "uml-helpers.accessors", "command": "uml-helpers:accessors" },

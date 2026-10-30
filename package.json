@@ -1,9 +1,12 @@
 {
-  "name": "staruml.uml-helpers",
-  "title": "UML Helpers",
-  "description": "Generate getters and setters from class attributes.",
-  "version": "0.8.1",
-  "keywords": ["uml", "class", "getter", "setter"],
+  "name": "underfr.uml-class-helper",
+  "title": "UML Class Helper",
+  "description": "PHP-style class diagrams: generates and keeps in sync constructors, getters, setters, add/remove, association attributes and interface methods.",
+  "version": "0.9.0",
+  "keywords": ["uml", "class", "php", "getter", "setter", "constructor"],
+  "homepage": "https://github.com/underfr/uml-class-helper",
+  "issues": "https://github.com/underfr/uml-class-helper/issues",
+  "repository": { "type": "git", "url": "https://github.com/underfr/uml-class-helper.git" },
   "author": { "name": "Loick Laurent" },
   "license": "MIT",
   "engines": { "staruml": ">=6.0.0" }

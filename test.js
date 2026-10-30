@@ -2,8 +2,8 @@
 const assert = require('assert')
 const {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
-  renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
-  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation, lintRoleClashes
+  orderedOps, renamedType, planInheritedParams, droppedInheritedParams, plural, singular, normalType,
+  opSpec, requiredOps, syncImplementation, COPY_TAG, copySource, staleCopies, lintClass, lintAssociation, lintRoleClashes
 } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
@@ -207,7 +207,7 @@ assert.deepStrictEqual(byName(planAccessors(associationFields(Produit, [{ end1: 
   [{ name: 'categorie', type: 'Categorie', multiplicity: '' }])
 
 // Two compositions Chocoblast ◆-- User: both default to `user`, only the first one generated it
-const [User, Chocoblast] = [{ name: 'User' }, { name: 'Chocoblast' }]
+const [User, Chocoblast] = [{ name: 'User', attributes: [] }, { name: 'Chocoblast', attributes: [] }]
 const blast = () => ({ end1: end(User, '1'), end2: end(Chocoblast, '', composite) })
 const [b1, b2] = [blast(), blast()]
 assert.deepStrictEqual(missingAttributes([], associationFields(Chocoblast, [b1, b2])).map(f => f.name), ['user'])
@@ -344,7 +344,7 @@ assert.deepStrictEqual(syncImplementation({ ...afficher, name: 'imprimer', param
 const lintCls = {
   name: 'produit',
   attributes: [{ name: 'Nom', type: 'string' }, { name: 'prix', type: '' }],
-  operations: [{ name: 'getPrix' }, { name: 'getStock' }, { name: 'addLigne' }, { name: 'afficher' }, { name: '__construct' }]
+  operations: ['getPrix', 'getStock', 'addLigne', 'afficher', '__construct'].map(name => ({ name, parameters: [] }))
 }
 const lintMessages = lintClass(lintCls, [], ['afficher'], [{ name: 'calculer', _parent: { name: 'Base' } }]).map(p => p.message)
 assert.deepStrictEqual(lintMessages, [
@@ -355,11 +355,73 @@ assert.deepStrictEqual(lintMessages, [
   'produit : « addLigne » sans attribut array<…> correspondant',
   'produit : méthode « calculer » de « Base » non implémentée'
 ])
-assert.deepStrictEqual(lintClass({ name: 'Ok', attributes: [{ name: 'lignes', type: 'array<Ligne>' }], operations: [{ name: 'addLigne' }, { name: 'getLignes' }] }, [], [], []), [])
+assert.deepStrictEqual(lintClass({ name: 'Ok', attributes: [{ name: 'lignes', type: 'array<Ligne>' }], operations: [{ name: 'addLigne', parameters: [] }, { name: 'getLignes', parameters: [] }] }, [], [], []), [])
 assert.deepStrictEqual(lintAssociation({ end1: end(Categorie, '1'), end2: end(Produit, '0..*', shared) }), [])
 assert.deepStrictEqual(lintAssociation({ end1: end(Personne, '1'), end2: end(Adresse) }).map(p => p.message), [
   'Association Personne — Adresse : multiplicité manquante côté Adresse',
   "Association Personne — Adresse : attribut généré des deux côtés (ajoute une flèche ou un losange si un seul côté doit l'avoir)"
 ])
+
+// Irregular plurals, on the last word of a camelCase name; English -y
+assert.deepStrictEqual(['travail', 'heureTravail', 'bijou', 'festival', 'pneu', 'child', 'category', 'day'].map(plural),
+  ['travaux', 'heureTravaux', 'bijoux', 'festivals', 'pneus', 'children', 'categories', 'days'])
+assert.deepStrictEqual(['travaux', 'heureTravaux', 'bijoux', 'festivals', 'children', 'yeux'].map(singular),
+  ['travail', 'heureTravail', 'bijou', 'festival', 'child', 'oeil'])
+// add/remove take the item class when the attribute is its plural: categories -> Categorie (FR) or Category (EN)
+const itemOps = attr => planAccessors([attr], []).filter(sp => /^(add|remove)/.test(sp.name)).map(sp => [sp.name, sp.params[0].name])
+assert.deepStrictEqual(itemOps({ name: 'categories', type: 'array<Category>', multiplicity: '' }),
+  [['addCategory', 'category'], ['removeCategory', 'category']])
+assert.deepStrictEqual(itemOps({ name: 'categories', type: 'array<Categorie>', multiplicity: '' })[0], ['addCategorie', 'categorie'])
+assert.deepStrictEqual(itemOps({ name: 'travaux', type: 'array<Travail>', multiplicity: '' })[0], ['addTravail', 'travail'])
+assert.deepStrictEqual(itemOps({ name: 'tags', type: 'array<string>', multiplicity: '' })[0], ['addTag', 'tag'])
+const travaux = { name: 'travaux', type: 'array<Travail>', multiplicity: '' }
+const addTravail = { name: 'addTravail', parameters: [P('travail', 'Travail'), P('', 'void', 'return')] }
+assert.deepStrictEqual(deletedWith(travaux, [addTravail]), [addTravail])
+
+// Types as PHP spells them
+assert.deepStrictEqual(['Boolean', '?String', 'Integer', 'Array<String>', 'double', 'DateTime', '?Categorie', 'int|Boolean'].map(normalType),
+  ['bool', '?string', 'int', 'array<string>', 'float', 'DateTime', '?Categorie', 'int|bool'])
+assert.strictEqual(normalType(Categorie), Categorie) // a class picked as type is left alone
+const typed = {
+  name: 'Produit',
+  attributes: [{ name: 'actif', type: 'Boolean' }],
+  operations: [{ name: 'setNom', parameters: [P('nom', 'String'), P('', 'void', 'return')] }]
+}
+assert.deepStrictEqual(lintClass(typed, [], [], []).map(p => p.message), [
+  'Produit : attribut « actif » : type « Boolean » à écrire « bool »',
+  'Produit : « setNom » : type « String » à écrire « string »',
+  'Produit : « setNom » sans attribut « nom »'
+])
+
+// __toString, and the reading order: __construct, then per attribute getter, setter, add, remove, then the others
+assert.deepStrictEqual(names(planAccessors([], [], { toStringOp: true })), ['__toString'])
+assert.deepStrictEqual(names(planAccessors([], ['__toString'], { toStringOp: true })), [])
+const op = name => ({ name, parameters: [] })
+const mixed = ['afficher', 'setNom', '__toString', 'addLigne', 'getLignes', 'getNom', '__construct', 'removeLigne', 'setLignes'].map(op)
+assert.deepStrictEqual(orderedOps([{ name: 'nom', type: 'string' }, { name: 'lignes', type: 'array<Ligne>' }], mixed).map(o => o.name),
+  ['__construct', 'getNom', 'setNom', 'getLignes', 'setLignes', 'addLigne', 'removeLigne', 'afficher', '__toString'])
+
+// Copies are found by their tag, not by name
+const source = { name: 'afficher', parameters: [] }
+const other = { name: 'imprimer', parameters: [] }
+const tagged = (name, ref) => ({ name, parameters: [], tags: [{ name: COPY_TAG, kind: 'reference', reference: ref, hidden: true }] })
+const realCopy = tagged('afficher', source)
+const handWritten = { name: 'afficher', parameters: [], tags: [] }
+assert.strictEqual(copySource(realCopy), source)
+assert.strictEqual(copySource(handWritten), undefined)
+assert.strictEqual(opSpec(source).source, source)
+assert.deepStrictEqual(staleCopies([realCopy, handWritten], [source]), [])
+assert.deepStrictEqual(staleCopies([realCopy, handWritten], [other]), [realCopy]) // interface no longer implemented
+assert.deepStrictEqual(staleCopies([tagged('x', null)], [source]).length, 1) // source deleted, project reopened
+// Copy renamed onto a method the class already has: that one implements it, the copy goes
+assert.deepStrictEqual(syncImplementation({ ...source, name: 'decrire' }, realCopy, [realCopy, op('decrire')]), [{ removeOp: realCopy }])
+assert.deepStrictEqual(syncImplementation({ ...source, isStatic: true }, realCopy), [{ assign: realCopy, field: 'isStatic', value: true }])
+
+// An attribute of another type holds the name an association would give
+const Magasin = { name: 'Magasin', attributes: [{ name: 'categorie', type: 'string' }] }
+assert.deepStrictEqual(lintRoleClashes(Magasin, [{ end1: end(Categorie, '1'), end2: end(Magasin, '0..*', shared) }]).map(p => p.message),
+  ["Magasin : l'attribut « categorie: string » porte le nom que donne l'association vers Categorie (?Categorie), qui n'est donc pas générée (renommer l'un des deux)"])
+Magasin.attributes[0].type = '?Categorie'
+assert.deepStrictEqual(lintRoleClashes(Magasin, [{ end1: end(Categorie, '1'), end2: end(Magasin, '0..*', shared) }]), [])
 
 console.log('ok')
