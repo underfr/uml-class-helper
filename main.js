@@ -1,7 +1,7 @@
 const {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, opSpec, requiredOps, syncImplementation,
-  lintClass, lintAssociation
+  lintClass, lintAssociation, lintRoleClashes
 } = require('./accessors')
 
 const ALL = { ctor: true, getters: true, setters: true, implement: true }
@@ -35,6 +35,9 @@ function descendantsOf (cls, seen = new Set([cls])) {
 }
 // Attribute names in __construct order (inherited first), for param positions
 const ctorNames = cls => [...inheritedAttrs(cls), ...cls.attributes].map(a => a.name)
+// Same, with the attributes about to be added to each class (`pendingOf`) after its own
+const ctorNamesWith = (cls, pendingOf) =>
+  [...ancestorsOf(cls).reverse(), cls].flatMap(c => [...c.attributes, ...pendingOf(c)]).map(a => a.name)
 
 // Interfaces a class implements, and classes that must copy the methods of an interface / abstract class
 const realizations = (elem, side) => app.repository.getRelationshipsOf(elem, r =>
@@ -90,17 +93,21 @@ function insertOperation (builder, cls, spec) {
   }
 }
 
-// Adds the missing attributes and planned operations of `cls` to `builder`; returns how many
-function addGenerated (builder, cls, { attrs, newAttrs }, options) {
+// Adds the missing attributes and planned operations of `cls` to `builder`; returns how many.
+// `pendingOf(c)`: attributes the same builder adds to class `c` (parents' ones go into a new __construct)
+function addGenerated (builder, cls, { attrs, newAttrs }, options, pendingOf = c => (c === cls ? newAttrs : [])) {
   for (const field of newAttrs) {
     const attr = Object.assign(new type.UMLAttribute(), { _parent: cls, visibility: 'private' }, field)
     builder.insert(attr)
     builder.fieldInsert(cls, 'attributes', attr)
   }
-  const specs = planAccessors(attrs, cls.operations.map(o => o.name), options, inheritedAttrs(cls))
+  const inherited = ancestorsOf(cls).reverse().flatMap(p => [...p.attributes, ...pendingOf(p)])
+  const specs = planAccessors(attrs, cls.operations.map(o => o.name), options, inherited)
   for (const spec of specs) insertOperation(builder, cls, spec)
-  // planAccessors only creates a missing __construct: new attributes go into an existing one too
-  applyChanges(builder, planInheritedParams(newAttrs, cls.operations, [...ctorNames(cls), ...newAttrs.map(f => f.name)]))
+  // planAccessors only creates a missing __construct: new attributes also go into existing ones, subclasses' too
+  for (const c of [cls, ...descendantsOf(cls)]) {
+    applyChanges(builder, planInheritedParams(newAttrs, ctorOnly(c), ctorNamesWith(c, pendingOf)))
+  }
   return newAttrs.length + specs.length
 }
 
@@ -155,11 +162,15 @@ function generate (options, models = app.selections.getSelectedModels()) {
     return
   }
   let count = 0
+  const pendingOf = c => (targets.has(c) ? targets.get(c).newAttrs : [])
+  // Subclasses first: their parents then insert params into the same constructors at lower indexes
+  // (fieldInsertAt indexes are computed before any insert is applied)
+  const ordered = [...targets].sort(([a], [b]) => ancestorsOf(b).length - ancestorsOf(a).length)
   runOperation('generate accessors', builder => {
-    for (const [cls, target] of targets) {
+    for (const [cls, target] of ordered) {
       // Before addGenerated: its __construct goes in last with fieldInsertAt, which later fieldInserts don't see
       if (options.implement) count += addRequired(builder, cls)
-      count += addGenerated(builder, cls, target, options)
+      count += addGenerated(builder, cls, target, options, pendingOf)
     }
   })
   app.toast.info(count > 0 ? `${count} élément(s) généré(s).` : 'Rien à générer (déjà présents).')
@@ -487,7 +498,7 @@ function checkDiagram () {
   for (const cls of new Set(diagramClasses(diagram))) {
     const contracts = [...ancestorsOf(cls), ...interfacesOf(cls)].flatMap(c => c.operations.map(o => o.name))
     const required = requiredOps(cls, ancestorsOf(cls), interfacesOf(cls))
-    problems.push(...lintClass(cls, inheritedAttrs(cls), contracts, required))
+    problems.push(...lintClass(cls, inheritedAttrs(cls), contracts, required), ...lintRoleClashes(cls, associationsOf(cls)))
   }
   for (const assoc of new Set(diagram.ownedViews.filter(v => v instanceof type.UMLAssociationView).map(v => v.model))) {
     problems.push(...lintAssociation(assoc))
@@ -583,7 +594,8 @@ function selfTest () {
     }
     const [b1, b2] = [blast(), blast()]
     generate(ALL, [K])
-    check('2 compositions vers User : un seul -user, 2 rôles à nommer', attr(K, 'user') && K.attributes.length === 2 && roleClashes(K, [b1, b2]).length === 2)
+    check('2 compositions vers User : un seul -user, 2 rôles à nommer, signalé par Check Diagram', attr(K, 'user') && K.attributes.length === 2 &&
+      roleClashes(K, [b1, b2]).length === 2 && lintRoleClashes(K, associationsOf(K)).length === 1)
     app.engine.setProperty(b2.end1, 'name', 'blasted')
     check('Rôle « blasted » sur la 2e : -user de la 1re intact', attr(K, 'user') && !attr(K, 'blasted'))
     app.engine.setProperty(b1.end1, 'name', 'target')
@@ -602,6 +614,13 @@ function selfTest () {
     check('Enfant : __construct(libelle, salaire)', ctorParams(E) === '["libelle","salaire"]')
     newAttr(P, 'ville', 'string')
     check('Attribut ajouté au parent : param ville dans l\'enfant', ctorParams(E) === '["libelle","ville","salaire"]')
+    const compo = edge('UMLAssociation', cView, pView).model
+    app.engine.setProperty(compo.end1, 'multiplicity', '1')
+    app.engine.setProperty(compo.end2, 'aggregation', 'composite')
+    generate(ALL, [P])
+    check('Composition générée dans le parent : param famille dans l\'enfant', ctorParams(E) === '["libelle","ville","famille","salaire"]')
+    app.engine.deleteElements([compo], [])
+    check('Composition supprimée : param famille retiré de l\'enfant', ctorParams(E) === '["libelle","ville","salaire"]')
     const abs = app.factory.createModel({ id: 'UMLOperation', parent: P, field: 'operations' })
     app.engine.setProperties(abs, { name: 'calculer', isAbstract: true })
     check('Méthode abstraite : calculer() copiée dans l\'enfant', has(E, 'calculer'))

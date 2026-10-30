@@ -80,6 +80,18 @@ function roleClashes (cls, assocs) {
   return held.filter(h => !h.assoc[h.from].name && held.some(o => o !== h && o.field.name === h.field.name))
 }
 
+// Several associations giving `cls` the same attribute name (named or not): only one is generated
+function lintRoleClashes (cls, assocs) {
+  const held = heldBy(cls, assocs)
+  return [...new Set(held.map(h => h.field.name))].flatMap(name => {
+    const same = held.filter(h => h.field.name === name)
+    return same.length < 2 ? [] : [{
+      elem: same[1].assoc,
+      message: `${cls.name} : ${same.length} associations donnent l'attribut « ${name} », un seul est généré (nommer les rôles ou relancer Generate)`
+    }]
+  })
+}
+
 // Whether entry `h` of `assoc` generated the attribute matching it: when several associations of the holder
 // (`holderAssocs`) give the same name and type, missingAttributes created it for the first one only
 function ownsField (assoc, h, holderAssocs) {
@@ -376,5 +388,5 @@ function lintAssociation (assoc) {
 module.exports = {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
-  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation
+  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation, lintRoleClashes
 }

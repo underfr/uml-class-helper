@@ -16,7 +16,7 @@ Puis redémarrer StarUML.
 
 Sélectionner une classe (ou seulement certains attributs), puis clic droit → **UML Helpers**, ou `Cmd/Ctrl+Alt+G`.
 **Generate for Whole Diagram** traite toutes les classes du diagramme ouvert.
-**Check Diagram** liste les problèmes du diagramme ouvert (noms, types manquants, multiplicités, méthodes orphelines ou non implémentées).
+**Check Diagram** liste les problèmes du diagramme ouvert (noms, types manquants, multiplicités, associations qui donnent le même attribut, méthodes orphelines ou non implémentées).
 **Run Self-Test** (menu Tools) vérifie tous les comportements automatiques sur un modèle temporaire, de préférence dans un projet vide.
 
 | Modèle | Généré |
@@ -39,7 +39,7 @@ Sélectionner une classe (ou seulement certains attributs), puis clic droit → 
   Rôle vide → nom de la classe, au pluriel côté `0..*` (pluriels réguliers ; sinon nommer le rôle).
   Plusieurs associations qui donneraient le même attribut (deux compositions `Chocoblast ◆── User` → `user`) : la génération demande un nom pour chacune, l'association concernée étant sélectionnée dans le diagramme (`target`, `blasted`), et l'enregistre comme nom de rôle.
 - Héritage (`Employe ──▷ Personne`) : le `__construct` de l'enfant prend d'abord les paramètres du parent (`__construct(nom, prenom, salaire)`) ; getters/setters seulement pour ses propres attributs.
-- Rien n'est dupliqué si on relance ; un `__construct` existant reçoit les nouveaux attributs ; un seul `Ctrl+Z` annule tout (un de plus si des noms de rôle ont été demandés).
+- Rien n'est dupliqué si on relance ; un `__construct` existant reçoit les nouveaux attributs, y compris ceux des classes filles ; un seul `Ctrl+Z` annule tout (un de plus si des noms de rôle ont été demandés).
 
 ## Automatique
 

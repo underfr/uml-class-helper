@@ -3,7 +3,7 @@ const assert = require('assert')
 const {
   planAccessors, associationFields, heldFields, roleClashes, ownsField, planAssocUpdate, missingAttributes, planSync, deletedWith,
   renamedType, planInheritedParams, droppedInheritedParams, plural, singular,
-  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation
+  opSpec, requiredOps, syncImplementation, lintClass, lintAssociation, lintRoleClashes
 } = require('./accessors')
 
 const names = specs => specs.map(s => s.name)
@@ -215,12 +215,17 @@ assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]).map(h => [h.assoc, h.fr
 assert.deepStrictEqual(roleClashes(User, [b1, b2]), [])
 assert.deepStrictEqual(heldFields(b1).map(h => ownsField(b1, h, [b1, b2])), [true])
 assert.deepStrictEqual(heldFields(b2).map(h => ownsField(b2, h, [b1, b2])), [false])
-// A named role is never asked again; only the unnamed one clashing with it is
+assert.deepStrictEqual(lintRoleClashes(Chocoblast, [b1, b2]).map(p => [p.elem, p.message]),
+  [[b2, 'Chocoblast : 2 associations donnent l\'attribut « user », un seul est généré (nommer les rôles ou relancer Generate)']])
+assert.deepStrictEqual(lintRoleClashes(User, [b1, b2]), [])
+// A named role is never asked again; only the unnamed one clashing with it is (Check Diagram still reports it)
 b2.end1.name = 'user'
 assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]).map(h => h.assoc), [b1])
+assert.strictEqual(lintRoleClashes(Chocoblast, [b1, b2]).length, 1)
 b1.end1.name = 'target'
 b2.end1.name = 'blasted'
 assert.deepStrictEqual(roleClashes(Chocoblast, [b1, b2]), [])
+assert.deepStrictEqual(lintRoleClashes(Chocoblast, [b1, b2]), [])
 assert.deepStrictEqual(associationFields(Chocoblast, [b1, b2]).map(f => [f.name, f.type]), [['target', 'User'], ['blasted', 'User']])
 // Existing __construct(target): the new blasted goes after it
 const targetCtor = { name: '__construct', parameters: [P('target', 'User')] }
